@@ -10,6 +10,7 @@ const context = await browser.newContext({ viewport: { width: 390, height: 844 }
 const page = await context.newPage();
 page.on("framenavigated", frame => console.log("NAVIGATED", frame.url()));
 page.on("pageerror", error => console.error("PAGE ERROR:", error.stack || error.message));
+page.on("console", msg => {if(msg.type()!=="debug")console.log("BROWSER CONSOLE:", msg.type(),msg.text())});
 async function shot(name) {
   const horizontalOverflow = await page.evaluate(() =>
     Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) >
@@ -24,6 +25,10 @@ try {
   await shot("390-home");
 
   await page.getByRole("link", { name: /导入新词书/ }).click();
+  await page.locator('input[type="file"]').evaluate(element => {
+    for(const name of ["input","change","click"])element.addEventListener(name, () =>
+      console.log("FILE DOM EVENT", name, "files",element.files?.length,"value",element.value),true);
+  });
   await page.locator('input[type="file"]').setInputFiles({
     name: "exam_sample.csv",
     mimeType: "text/csv",

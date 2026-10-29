@@ -1,4 +1,4 @@
-import { HashRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Route, Routes, useParams } from "react-router-dom";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Import from "./pages/Import";
@@ -16,7 +16,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/import" element={<Import />} />
-          <Route path="/review/:wordbookId" element={<Review />} />
+          <Route path="/review/:wordbookId" element={<ReviewRoute />} />
         </Routes>
       </Layout>
     </HashRouter>

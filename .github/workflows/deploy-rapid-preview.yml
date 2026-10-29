@@ -1,0 +1,51 @@
+name: Publish rapid study standalone preview
+on:
+  push:
+    branches: [feat/exam-flashcards-fsrs-20261029]
+    paths: [.github/workflows/deploy-rapid-preview.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: rapid-preview-pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run lint
+      - name: Checkout existing published site without changing its root
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: pages
+          persist-credentials: true
+      - name: Publish only to /rapid/ below the existing site
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf pages/rapid
+          mkdir -p pages/rapid
+          cp -a dist/. pages/rapid/
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rapid/
+          if git diff --cached --quiet; then
+            echo "No changes to rapid site."
+            exit 0
+          fi
+          if git diff --cached --name-only | grep -v '^rapid/' ; then
+            echo "Safety check: changes outside rapid/ rejected."
+            exit 1
+          fi
+          git commit -m "Publish rapid one-screen flashcards from $GITHUB_SHA"
+          git pull --rebase origin gh-pages
+          git push origin HEAD:gh-pages

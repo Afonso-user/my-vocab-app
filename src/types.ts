@@ -71,4 +71,4 @@ export type StudyProgress = {
 };
 
 export type StudyMode = "today" | "new" | "cram";
-export type StudyQueueItem = { item: VocabularyItem; kind: "new" | "due" | "cram" };
+export type StudyQueueItem = { item: VocabularyItem; kind: "new" | "due" | "cram" | "reinforce" };

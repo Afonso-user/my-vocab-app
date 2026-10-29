@@ -106,3 +106,42 @@ test("Backup restore duplicates deck IDs but retains FSRS cards and histories", 
   assert.equal(restoredProgress.history.length, 1);
   assert.equal(getProgress(meta.id)[item.id].fsrs.cardId, item.id);
 });
+
+test("Pasted two-column vocabulary without headers keeps the first card", async () => {
+  const { parsePastedText } = await import("../src/lib/parse.ts");
+  const result = parsePastedText("casa\t房子\nolá\t你好");
+  assert.deepEqual(result.headers, ["词语", "释义"]);
+  assert.equal(result.rows.length, 2);
+  assert.equal(result.inferredHeaders, true);
+  const mapped = autoMapColumns(result.headers);
+  assert.equal(mapped.word, "词语");
+  assert.equal(mapped.meaning, "释义");
+  assert.equal(buildItems(result.rows, mapped, "paste", "未分类").items.length, 2);
+});
+test("Recognizes Portuguese headers without confusing sentence translation", async () => {
+  const { suggestColumns } = await import("../src/lib/mapping.ts");
+  const mapped = suggestColumns(["Português (BR)", "Significado", "Exemplo", "例句翻译", "英文释义"]);
+  assert.equal(mapped.mapping.word, "Português (BR)");
+  assert.equal(mapped.mapping.meaning, "Significado");
+  assert.equal(mapped.mapping.exampleZh, "例句翻译");
+  assert.equal(mapped.mapping.translationEn, "英文释义");
+  assert.equal(mapped.ambiguous.length, 0);
+});
+test("Cram order prioritizes overdue and forgotten words without mutating records", async () => {
+  const { buildExamDrill } = await import("../src/lib/queue.ts");
+  const now = Date.now();
+  const cards = [
+    {id:"mature",wordbookId:"d",word:"mature",meaning:"熟"},
+    {id:"overdue",wordbookId:"d",word:"overdue",meaning:"到期"},
+    {id:"forgot",wordbookId:"d",word:"forgot",meaning:"忘记"},
+  ];
+  const records = {
+    mature: {seenCount:9,lastGrade:"easy",fsrs:{dueAt:new Date(now+86400000*30).toISOString(),stability:90}},
+    overdue: {seenCount:5,lastGrade:"good",fsrs:{dueAt:new Date(now-86400000*5).toISOString(),stability:4}},
+    forgot: {seenCount:3,lastGrade:"again",fsrs:{dueAt:new Date(now+86400000).toISOString(),stability:1}},
+  };
+  const snapshot = JSON.stringify(records);
+  const results = buildExamDrill(cards, records, 3, now, () => 0);
+  assert.deepEqual(results.map(x=>x.item.id), ["overdue","forgot","mature"]);
+  assert.equal(JSON.stringify(records), snapshot);
+});

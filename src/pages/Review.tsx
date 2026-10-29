@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, Ke
 import type { Grade, StudyMode, StudyProgress, StudyQueueItem, VocabularyItem } from "../types";
 import { getProgress, getWordbook, getWordbookItems, saveProgress, updateWordbook } from "../lib/store";
 import { isDue, schedule } from "../lib/fsrs";
+import { buildExamDrill } from "../lib/queue";
 
 const GRADES: { grade: Grade; label: string; hint: string }[] = [
   { grade: "again", label: "重来", hint: "忘记了" },
@@ -13,14 +14,6 @@ const GRADES: { grade: Grade; label: string; hint: string }[] = [
 ];
 type UndoEntry = { itemId: string; before?: StudyProgress; previousQueue: StudyQueueItem[] };
 
-function shuffle<T>(values: T[]): T[] {
-  const result = [...values];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
 function daysUntil(date: string) {
   if (!date) return null;
   const timestamp = new Date(date + "T23:59:59").getTime();
@@ -63,12 +56,19 @@ export default function Review() {
   const [speechLanguage, setSpeechLanguage] = useState<"pt-BR" | "pt-PT" | "en-US">("pt-BR");
   const [message, setMessage] = useState("");
 
-  const fresh = items.filter(item => !progress[item.id]?.fsrs);
-  const due = items.filter(item => isDue(progress[item.id]))
-    .sort((a, b) => new Date(progress[a.id]?.fsrs?.dueAt ?? 0).getTime()
-      - new Date(progress[b.id]?.fsrs?.dueAt ?? 0).getTime());
-  const learned = items.filter(item => (progress[item.id]?.seenCount ?? 0) > 0).length;
-  const legacy = fresh.filter(item => progress[item.id]?.legacySeen).length;
+  const { fresh, due, learned, legacy } = useMemo(() => {
+    const fresh: VocabularyItem[] = [], due: VocabularyItem[] = [];
+    let learned = 0, legacy = 0;
+    const now = Date.now();
+    for (const item of items) {
+      const p = progress[item.id];
+      if (!p?.fsrs) { fresh.push(item); if (p?.legacySeen) legacy++; }
+      if (isDue(p, now)) due.push(item);
+      if (p?.seenCount) learned++;
+    }
+    due.sort((a, b) => Date.parse(progress[a.id].fsrs!.dueAt) - Date.parse(progress[b.id].fsrs!.dueAt));
+    return { fresh, due, learned, legacy };
+  }, [items, progress]);
   const days = daysUntil(exam);
   const perDay = days && days > 0 ? Math.ceil(fresh.length / days) : null;
   const current = queue[position];
@@ -82,13 +82,13 @@ export default function Review() {
       ...fresh.slice(0, newLimit).map(item => ({ item, kind: "new" as const })),
     ];
     if (type === "new") next = fresh.slice(0, newLimit).map(item => ({ item, kind: "new" }));
-    if (type === "cram") next = shuffle(items).slice(0, 100).map(item => ({ item, kind: "cram" }));
+    if (type === "cram") next = buildExamDrill(items, progress, 100);
     if (!next.length) return;
     setMode(type); setQueue(next); setPosition(0); setRevealed(false);
     setRated(false); setUndo(null); setCompletedCount(0); setMessage("");
   }
   function rate(grade: Grade) {
-    if (!item || rated || mode === "cram") return;
+    if (!item || rated || mode === "cram" || current.kind === "reinforce") return;
     const before = progress[item.id];
     try {
       const nextCard = schedule(before, item, grade, retention);
@@ -96,8 +96,13 @@ export default function Review() {
       saveProgress(wordbookId, updated);
       setUndo({ itemId: item.id, before, previousQueue: queue });
       setProgress(updated); setRated(true); setCompletedCount(n => n + 1);
-      if (grade === "again" && queue.filter(q => q.item.id === item.id).length === 1)
-        setQueue(q => [...q, { item, kind: "due" }]);
+      // A single optional same-session reinforcement does not add a second FSRS grade.
+      if (grade === "again" && !queue.some(q => q.item.id === item.id && q.kind === "reinforce"))
+        setQueue(previous => {
+          const copy = [...previous];
+          copy.splice(Math.min(position + 4, copy.length), 0, { item, kind: "reinforce" });
+          return copy;
+        });
       setMessage("");
     } catch (error) { setMessage(storageError(error)); }
   }
@@ -129,9 +134,9 @@ export default function Review() {
         || event.target instanceof HTMLSelectElement || mode === "select" || !current) return;
       if (!revealed && [" ", "Enter"].includes(event.key)) {
         event.preventDefault(); setRevealed(true);
-      } else if (revealed && !rated && mode !== "cram" && /^[1-4]$/.test(event.key)) {
+      } else if (revealed && !rated && mode !== "cram" && current.kind !== "reinforce" && /^[1-4]$/.test(event.key)) {
         event.preventDefault(); rate(GRADES[Number(event.key) - 1].grade);
-      } else if (revealed && (rated || mode === "cram") && ["Enter", "ArrowRight"].includes(event.key)) {
+      } else if (revealed && (rated || mode === "cram" || current.kind === "reinforce") && ["Enter", "ArrowRight"].includes(event.key)) {
         event.preventDefault(); next();
       }
     }
@@ -181,7 +186,7 @@ export default function Review() {
           <button className="btn btn-primary full" disabled={!due.length && !fresh.length} onClick={() => start("today")}>开始今日学习 <ArrowRight size={17}/></button></div>
         <div className="mode-card"><CheckCircle2 size={23}/><h3>新词排程</h3><p>为未建立 FSRS 计划的词卡安排首次复习。</p>
           <button className="btn btn-secondary full" disabled={!fresh.length} onClick={() => start("new")}>学习 {Math.min(newLimit, fresh.length)} 张</button></div>
-        <div className="mode-card"><RotateCcw size={23}/><h3>考前速刷</h3><p>每轮随机最多 100 张，不修改记忆计划。</p>
+        <div className="mode-card"><RotateCcw size={23}/><h3>考前弱项速刷</h3><p>优先抽取到期、记错和稳定性低的词卡；不修改 FSRS 日程。</p>
           <button className="btn btn-ghost full" disabled={!items.length} onClick={() => start("cram")}>立即速刷</button></div>
       </div>
       {legacy > 0 && <p className="legacy-notice">已保留 {legacy} 张词卡的旧版学习次数。首次在新版评分后，才会建立真正的 FSRS 日程。</p>}
@@ -194,7 +199,7 @@ export default function Review() {
           <strong>{position + 1} <i>/</i> {queue.length}</strong></div>
         <div className="session-progress"><span style={{ width: (position / queue.length * 100) + "%" }}/></div>
         <article className={"flashcard " + (revealed ? "flipped" : "")}>
-          <div className="card-topline"><span>{current.kind === "new" ? "LEARN / 待排程" : current.kind === "due" ? "REVIEW / 到期" : "CRAM / 速刷"}</span>
+          <div className="card-topline"><span>{current.kind === "new" ? "LEARN / 待排程" : current.kind === "due" ? "REVIEW / 到期" : current.kind === "reinforce" ? "REINFORCE / 补记" : "CRAM / 速刷"}</span>
             <span>{item?.unit ?? item?.capleLevel ?? "FLASHCARD"}</span></div>
           <div className="word-center"><h1 lang="pt">{item?.word}</h1>
             {item?.pronunciation && <p className="phonetic">{item.pronunciation}</p>}
@@ -220,8 +225,8 @@ export default function Review() {
         </article>
         <div className="card-controls">
           {!revealed ? <button className="btn btn-primary full reveal-button" onClick={() => setRevealed(true)}>查看答案 <ArrowRight size={17}/></button>
-          : mode === "cram" ? <button className="btn btn-primary full" onClick={next}>下一张 <ArrowRight size={17}/></button>
-          : !rated ? <><p className="grade-title">你刚刚回想得怎么样？</p>
+          : mode === "cram" || current.kind === "reinforce" ? <button className="btn btn-primary full" onClick={next}>{current.kind === "reinforce" ? "完成加固 · 继续" : "下一张"} <ArrowRight size={17}/></button>
+          : !rated ? <><p className="grade-title">忘记了请选「重来」，只有真正回想起才选「困难」</p>
               <div className="grade-grid">{GRADES.map((grade, index) => <button key={grade.grade} className={"grade-" + grade.grade} onClick={() => rate(grade.grade)}>
                 <strong>{grade.label}</strong><small>{grade.hint}</small><kbd>{index + 1}</kbd></button>)}</div></>
           : <><div className="rating-confirmation"><CheckCircle2 size={17}/><span>已保存 · 下次复习 {dueLabel(item && progress[item.id]?.fsrs?.dueAt)}</span>

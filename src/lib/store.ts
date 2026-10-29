@@ -26,9 +26,22 @@ function parse<T>(value: string | null, fallback: T): T {
   try { return value ? JSON.parse(value) as T : fallback; }
   catch { return fallback; }
 }
-function getJson<T>(key: string, fallback: T) {
-  return parse<T>(localStorage.getItem(key), fallback);
+const parsedCache = new Map<string, { raw: string | null; value: unknown }>();
+function getJson<T>(key: string, fallback: T): T {
+  const raw = localStorage.getItem(key);
+  const cached = parsedCache.get(key);
+  if (cached && cached.raw === raw) return cached.value as T;
+  const value = parse(raw, fallback);
+  parsedCache.set(key, { raw, value });
+  if (parsedCache.size > 120) parsedCache.delete(parsedCache.keys().next().value!);
+  return value;
 }
+const legacyMergeCache = new Map<string, {
+  stored: Record<string, StudyProgress>;
+  legacy: Record<string, LegacyRecord>;
+  items: VocabularyItem[];
+  merged: Record<string, StudyProgress>;
+}>();
 function normalizeLegacy(word: string) {
   return word.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
@@ -50,9 +63,11 @@ export function getProgress(id: string): Record<string, StudyProgress> {
   const recorded = getJson<Record<string, StudyProgress>>(PROGRESS + id, {});
   const legacy = getJson<Record<string, LegacyRecord>>(LEGACY + id, {});
   if (!legacy || Object.keys(legacy).length === 0) return recorded;
-
+  const items = getWordbookItems(id);
+  const previous = legacyMergeCache.get(id);
+  if (previous?.stored === recorded && previous.legacy === legacy && previous.items === items) return previous.merged;
   const all = { ...recorded };
-  for (const item of getWordbookItems(id)) {
+  for (const item of items) {
     if (all[item.id]) continue;
     const old = legacy[normalizeLegacy(item.word)];
     if (!old || !(old.seenCount && old.seenCount > 0)) continue;
@@ -73,6 +88,7 @@ export function getProgress(id: string): Record<string, StudyProgress> {
       // No FSRS card: the first new rating establishes a real schedule.
     };
   }
+  legacyMergeCache.set(id, { stored: recorded, legacy, items, merged: all });
   return all;
 }
 export function saveProgress(id: string, progress: Record<string, StudyProgress>) {
@@ -95,6 +111,7 @@ export function updateWordbook(meta: WordbookMeta) {
   ));
 }
 export function deleteWordbook(id: string) {
+  legacyMergeCache.delete(id);
   // Update registry before deleting data so an interrupted write does not lose a deck.
   localStorage.setItem(REGISTRY, JSON.stringify(listWordbooks().filter(b => b.id !== id)));
   localStorage.removeItem(ITEMS + id);

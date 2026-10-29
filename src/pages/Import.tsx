@@ -4,9 +4,9 @@ import {
   AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2,
   FileSpreadsheet, Info, Layers3, UploadCloud,
 } from "lucide-react";
-import { parseFile, type ParsedFile } from "../lib/parse";
+import { parseFile, parsePastedText, type ParsedFile } from "../lib/parse";
 import {
-  autoMapColumns, buildItems, FIELD_GROUPS, FIELD_LABELS,
+  autoMapColumns, buildItems, FIELD_GROUPS, FIELD_LABELS, suggestColumns,
   REQUIRED_FIELDS, type FieldKey, type ImportError,
 } from "../lib/mapping";
 import { saveWordbook } from "../lib/store";
@@ -37,8 +37,17 @@ export default function Import() {
   const [createdId, setCreatedId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteValue, setPasteValue] = useState("");
+  const [mappingConfirmed, setMappingConfirmed] = useState(false);
 
   const mappedColumns = useMemo(() => new Set(Object.values(mapping).filter(Boolean)), [mapping]);
+  const suggestions = useMemo(() => parsed ? suggestColumns(parsed.headers) : null, [parsed]);
+  const readyToImport = !!(parsed && mapping.word && mapping.meaning && mapping.word !== mapping.meaning
+    && parsed.headers.includes(mapping.word) && parsed.headers.includes(mapping.meaning));
+  const quickImportSafe = readyToImport && (mappingConfirmed || parsed?.inferredHeaders
+    || (suggestions?.ambiguous.length === 0 && (suggestions?.confidence.word ?? 0) >= 80
+      && (suggestions?.confidence.meaning ?? 0) >= 80));
   const unmappedHeaders = parsed?.headers.filter(h => !mappedColumns.has(h)) ?? [];
   const previewRow = parsed?.rows[0];
   const previewWord = mapping.word && previewRow?.[mapping.word];
@@ -52,12 +61,28 @@ export default function Import() {
       setSource(file);
       setParsed(result);
       setMapping(autoMapColumns(result.headers));
+      setMappingConfirmed(false);
       setBookName(old => sheet ? old : (file.name.replace(/\.[^.]+$/, "") || "期中词书"));
       setStep("map");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "解析失败，请检查文件格式");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePastedText = () => {
+    setError("");
+    try {
+      const result = parsePastedText(pasteValue);
+      setSource(null);
+      setParsed(result);
+      setMapping(autoMapColumns(result.headers));
+      setBookName("我的速记词书");
+      setMappingConfirmed(false);
+      setStep("map");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "粘贴内容无法解析");
     }
   };
 
@@ -75,7 +100,7 @@ export default function Import() {
     setStep("config");
   };
 
-  const confirm = () => {
+  const confirm = (startDirect = false) => {
     if (!parsed || !bookName.trim()) return;
     setError("");
     const id = "custom-" + crypto.randomUUID();
@@ -96,7 +121,8 @@ export default function Import() {
       setErrors(result.errors);
       setItemCount(result.items.length);
       setCreatedId(id);
-      setStep("confirm");
+      if (startDirect) nav("/review/" + id);
+      else setStep("confirm");
     } catch (cause) {
       const quota = cause instanceof DOMException && cause.name === "QuotaExceededError";
       setError(quota
@@ -145,6 +171,15 @@ export default function Import() {
                 else setError("没有读取到文件，请重新选择");
               }} />
           </label>
+          <details className="paste-box" open={pasteOpen} onToggle={event => setPasteOpen(event.currentTarget.open)}>
+            <summary>不想建 CSV？直接粘贴词语和释义</summary>
+            <p>支持从 Excel / WPS 复制两列内容，或直接输入“单词,释义”，一行一张词卡。</p>
+            <textarea rows={6} value={pasteValue} onChange={event => setPasteValue(event.target.value)}
+              placeholder={"葡语\t中文释义\ncasa\t房子\nolá\t你好"} spellCheck={false}/>
+            <button className="btn btn-secondary" disabled={!pasteValue.trim()} onClick={handlePastedText}>
+              解析粘贴内容 <ArrowRight size={16}/>
+            </button>
+          </details>
           <div className="upload-footnotes">
             <div><FileSpreadsheet size={19}/><strong>直接使用现有表格</strong><p>第一行作为表头，支持 Excel 多工作表。</p></div>
             <div><Layers3 size={19}/><strong>字段尽量不丢失</strong><p>额外列会保存在词卡详情中，不强制修改原表。</p></div>
@@ -166,6 +201,11 @@ export default function Import() {
             )}
           </div>
 
+          {parsed.inferredHeaders && <div className="mapping-alert"><CheckCircle2 size={16}/> 识别到无表头的双列词表，已补齐“词语 / 释义”，首行不会被丢弃。</div>}
+          {quickImportSafe && <div className="quick-import">
+            <div><strong>映射已准备好</strong><span>词语和释义已经匹配；无需额外配置即可直接学习。</span></div>
+            <button className="btn btn-primary" onClick={() => confirm(true)}>快速导入并学习 <ArrowRight size={16}/></button>
+          </div>}
           <div className="mapping-layout">
             <div className="mapping-panel">
               <div className="panel-heading"><div><span className="kicker">COLUMN MAPPING</span><h2>选择词卡字段</h2></div><span className="panel-help">* 必填</span></div>
@@ -178,6 +218,7 @@ export default function Import() {
                     <select value={mapping[key] ?? ""}
                       onChange={event => {
                         setMapping(old => ({ ...old, [key]: event.target.value || null }));
+                        setMappingConfirmed(true);
                         setError("");
                       }}>
                       <option value="">不使用</option>
@@ -192,7 +233,7 @@ export default function Import() {
                     <div className="mapping-grid">{body}</div>
                   </details>;
               })}
-              <p className="mapping-note"><Info size={15}/> 未映射的 {unmappedHeaders.length} 列也会作为补充资料保留在词卡背面。</p>
+              <p className="mapping-note"><Info size={15}/> 未映射的 {unmappedHeaders.length} 列会保留在词卡详情中。建议检查正面与释义列，避免误映射。</p>
             </div>
 
             <aside className="mapping-preview">
@@ -210,7 +251,8 @@ export default function Import() {
             </aside>
           </div>
           <div className="step-actions"><button className="btn btn-ghost" onClick={() => {setStep("upload");setError("");}}><ArrowLeft size={16}/> 重新选择</button>
-            <button className="btn btn-primary" onClick={goToConfig}>确认映射 <ArrowRight size={16}/></button></div>
+            <button className="btn btn-secondary" disabled={!readyToImport} onClick={() => confirm(true)}>直接导入并学习</button>
+            <button className="btn btn-primary" onClick={goToConfig}>高级设置 <ArrowRight size={16}/></button></div>
         </div>
       )}
 
@@ -230,7 +272,7 @@ export default function Import() {
             <p className="config-tip">FSRS 将根据每张卡的真实评价安排复习；考前速刷不改变复习记录。</p>
           </div>
           <div className="step-actions"><button className="btn btn-ghost" onClick={() => {setStep("map");setError("");}}><ArrowLeft size={16}/> 返回映射</button>
-            <button className="btn btn-primary" disabled={!bookName.trim()} onClick={confirm}>创建词书 <Check size={17}/></button></div>
+            <button className="btn btn-primary" disabled={!bookName.trim()} onClick={() => confirm()}>创建词书 <Check size={17}/></button></div>
         </div>
       )}
 

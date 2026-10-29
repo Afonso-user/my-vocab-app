@@ -25,15 +25,15 @@ export const FIELD_GROUPS: { label: string; keys: FieldKey[] }[] = [
 ];
 
 const ALIASES: Record<FieldKey, string[]> = {
-  word: ["word", "term", "lemma", "palavra", "vocab", "vocabulary", "portuguese", "englishword", "foreignword", "单词", "词汇", "外语", "葡语", "葡语单词", "葡文", "葡文单词", "外语单词", "英语", "英语单词", "原词", "术语", "题目", "正面", "front", "词条"],
-  meaning: ["meaning", "translation", "chinese", "definitionzh", "answer", "back", "释义", "中文", "中文释义", "翻译", "意思", "含义", "解释", "答案", "背面", "中文翻译"],
+  word: ["word", "term", "lemma", "palavra", "vocábulo", "vocabulário", "vocab", "vocabulary", "portuguese", "português", "portugues", "foreign term", "foreignword", "englishword", "foreignword", "单词", "词汇", "词语", "外语", "葡语", "葡语单词", "葡文", "葡文单词", "外语单词", "英语", "英语单词", "原词", "术语", "题目", "正面", "front", "词条"],
+  meaning: ["meaning", "translation", "chinese", "significado", "definicao", "definição", "definition", "definitionzh", "answer", "back", "释义", "中文", "中文释义", "中文翻译", "汉语翻译", "翻译", "意思", "含义", "解释", "答案", "背面", "中文翻译"],
   pronunciation: ["pronunciation", "phonetic", "ipa", "发音", "音标", "读音"],
   partOfSpeech: ["pos", "partofspeech", "wordclass", "词性", "词类"],
   gender: ["gender", "grammaticalgender", "阴阳性", "名词性别"],
   plural: ["plural", "复数", "复数形式"],
-  example: ["example", "sentence", "examplesentence", "examplept", "葡语例句", "外语例句", "例句", "用例", "例句原文"],
-  exampleZh: ["examplezh", "sentencezh", "exampletranslation", "sentencechinese", "例句翻译", "例句中文", "中文例句", "例句释义"],
-  collocations: ["collocation", "collocations", "phrase", "phrases", "搭配", "固定搭配", "短语", "词组"],
+  example: ["example", "sentence", "examplesentence", "exemplo", "frase", "fraseexemplo", "examplept", "葡语例句", "外语例句", "例句", "用例", "例句原文"],
+  exampleZh: ["examplezh", "sentencezh", "traduçãodoexemplo", "traducaodoexemplo", "exampletranslation", "sentencechinese", "例句翻译", "例句中文", "中文例句", "例句释义"],
+  collocations: ["collocation", "collocations", "expressão", "expressoes", "phrase", "phrases", "搭配", "固定搭配", "短语", "词组"],
   synonyms: ["synonym", "synonyms", "近义词", "同义词"],
   antonyms: ["antonym", "antonyms", "反义词"],
   variants: ["variants", "variation", "wordforms", "forms", "变体", "词形", "变化形式"],
@@ -42,7 +42,7 @@ const ALIASES: Record<FieldKey, string[]> = {
   mnemonic: ["mnemonic", "memorytip", "记忆法", "记忆提示", "联想", "助记"],
   conjugation: ["conjugation", "conjugations", "verbforms", "变位", "动词变位"],
   grammar: ["grammar", "grammarnote", "语法", "语法说明"],
-  translationEn: ["englishmeaning", "englishdefinition", "englishtranslation", "释义英文", "英文释义"],
+  translationEn: ["englishmeaning", "englishdefinition", "englishtranslation", "释义英文", "英文释义", "英语释义"],
   level: ["level", "cefr", "caple", "grade", "等级", "级别", "难度"],
   unit: ["unit", "chapter", "lesson", "section", "单元", "章节", "课次", "课文", "课时"],
   source: ["source", "origin", "出处", "来源", "教材"],
@@ -53,33 +53,68 @@ function normalize(s: string): string {
 }
 
 /** Exact aliases first; do not let "例句翻译" occupy both example and meaning. */
-export function autoMapColumns(headers: string[]): Record<FieldKey, string | null> {
+export type MappingSuggestion = {
+  mapping: Record<FieldKey, string | null>;
+  confidence: Partial<Record<FieldKey, number>>;
+  ambiguous: FieldKey[];
+};
+
+function scoreHeader(field: FieldKey, header: string): number {
+  const h = normalize(header);
+  if (!h) return 0;
+  const aliases = ALIASES[field];
+  const best = aliases.reduce((score, alias) => {
+    const a = normalize(alias);
+    if (a === h) return Math.max(score, 100);
+    if (a.length >= 2 && h.startsWith(a)) return Math.max(score, 83 + Math.min(8, a.length));
+    if (a.length >= 3 && h.endsWith(a)) return Math.max(score, 78);
+    if (a.length >= 3 && h.includes(a)) return Math.max(score, 59);
+    return score;
+  }, 0);
+  // These columns are easily confused by over-eager substring matching.
+  if (field === "meaning" && /(例句|短语|固定搭配|同义|近义)/.test(header)) return 0;
+  if (field === "word" && /(释义|例句|意思|翻译|定义|音标|解释)/.test(header)) return 0;
+  if (field === "example" && /(翻译|中文|释义)/.test(header)) return 0;
+  if (field === "level" && /(词性)/.test(header)) return 0;
+  return best;
+}
+
+/** One-to-one candidate ranking; near-ties are surfaced instead of silently guessing. */
+export function suggestColumns(headers: string[]): MappingSuggestion {
   const mapping = Object.fromEntries(Object.keys(FIELD_LABELS).map(k => [k, null])) as Record<FieldKey, string | null>;
-  const used = new Set<string>();
-  // Specific fields must be matched before ambiguous base fields.
-  const priority: FieldKey[] = [
-    "exampleZh","translationEn","pronunciation","partOfSpeech","gender","plural",
-    "collocations","synonyms","antonyms","variants","mnemonic","conjugation",
-    "grammar","level","unit","tags","source","notes","example","word","meaning"
-  ];
-  for (const field of priority) {
-    const hit = headers.find(h => !used.has(h) && ALIASES[field].some(a => normalize(a) === normalize(h)));
-    if (hit) { mapping[field] = hit; used.add(hit); }
+  const confidence: Partial<Record<FieldKey, number>> = {};
+  const ambiguous: FieldKey[] = [];
+  const candidates: { field: FieldKey; header: string; points: number }[] = [];
+  for (const field of Object.keys(FIELD_LABELS) as FieldKey[])
+    for (const header of headers) {
+      const points = scoreHeader(field, header);
+      if (points >= 55) candidates.push({ field, header, points });
+    }
+  // Exact labels outrank fuzzy ones; specific labels win over generic ones.
+  candidates.sort((a, b) => b.points - a.points || b.header.length - a.header.length);
+  const claimedFields = new Set<FieldKey>();
+  const claimedColumns = new Set<string>();
+  for (const { field, header, points } of candidates) {
+    if (claimedFields.has(field) || claimedColumns.has(header)) continue;
+    mapping[field] = header; confidence[field] = points;
+    claimedFields.add(field); claimedColumns.add(header);
   }
-  // Prefer precise labels but allow headers such as "单词（葡语）" / "例句翻译（中文）".
-  for (const field of priority) {
-    if (mapping[field]) continue;
-    const aliases = ALIASES[field].filter(a => normalize(a).length >= 3);
-    const hit = headers.find(h => {
-      const key = normalize(h);
-      return !used.has(h) && aliases.some(a => key.startsWith(normalize(a)) || key.endsWith(normalize(a)));
-    });
-    if (hit) { mapping[field] = hit; used.add(hit); }
+  if (headers.length === 2) {
+    if (!mapping.word && !claimedColumns.has(headers[0])) {
+      mapping.word = headers[0]; confidence.word = 30;
+    }
+    if (!mapping.meaning && !claimedColumns.has(headers[1]) && headers[1] !== mapping.word) {
+      mapping.meaning = headers[1]; confidence.meaning = 30;
+    }
   }
-  // Common two-column files with unknown headers: let the user confirm the preview.
-  if (!mapping.word && headers.length === 2) mapping.word = headers[0];
-  if (!mapping.meaning && headers.length === 2 && headers[1] !== mapping.word) mapping.meaning = headers[1];
-  return mapping;
+  for (const field of REQUIRED_FIELDS) {
+    if (mapping[field] && (confidence[field] ?? 0) < 55) ambiguous.push(field);
+    if (!mapping[field]) ambiguous.push(field);
+  }
+  return { mapping, confidence, ambiguous };
+}
+export function autoMapColumns(headers: string[]): Record<FieldKey, string | null> {
+  return suggestColumns(headers).mapping;
 }
 
 export type ImportError = { row: number; message: string };

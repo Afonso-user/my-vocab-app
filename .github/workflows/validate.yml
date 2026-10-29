@@ -1,13 +1,14 @@
 name: Validate exam flashcards
 on:
-  push:
-    branches: [feat/exam-flashcards-fsrs-20261029]
   pull_request:
     branches: [main]
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
+    concurrency:
+  group: review-validate-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4

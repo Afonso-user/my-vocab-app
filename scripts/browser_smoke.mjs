@@ -6,7 +6,9 @@ const ROOT = "http://127.0.0.1:4173";
 const OUT = "artifacts/ui";
 await mkdir(OUT, { recursive: true });
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, serviceWorkers: "block" });
+const page = await context.newPage();
+page.on("framenavigated", frame => console.log("NAVIGATED", frame.url()));
 page.on("pageerror", error => console.error("PAGE ERROR:", error.stack || error.message));
 async function shot(name) {
   const horizontalOverflow = await page.evaluate(() =>

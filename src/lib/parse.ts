@@ -9,7 +9,6 @@ export type ParsedFile = {
   inferredHeaders?: boolean;
 };
 const LIMIT = 10000;
-const workbooks = new WeakMap<File, import('xlsx').WorkBook>();
 const MAX_FILE_BYTES = 24 * 1024 * 1024;
 const workbookCache = new WeakMap<File, WorkBook>();
 
@@ -52,7 +51,6 @@ export function parseDelimitedText(content: string): string[][] {
       if (ch === "\r" && text[i+1] === "\n") i++;
       row.push(field.trim());
       if (row.some(Boolean)) rows.push(row);
-      if (rows.length > LIMIT + 2) throw new Error('最多允许 10,000 行');
       if (rows.length > LIMIT + 2) throw new Error("单次最多支持 10,000 行数据");
       row = []; field = "";
     } else field += ch;
@@ -77,6 +75,26 @@ function shouldInferHeaders(first: string[], second?: string[]): boolean {
   return (hanA !== hanB || (/\S/.test(a) && /\S/.test(b) && !/\d{4}[-/.]\d{1,2}/.test(a)));
 }
 
+
+function toParsed(data:unknown[][],fileName:string,sheets?:string[],selectedSheet?:string):ParsedFile {
+ const filtered=data.filter(row=>row.some(value=>String(value??"").trim()));
+ if(!filtered.length)throw new Error("文件中没有有效内容");
+ const first=filtered[0].map(value=>String(value??"").trim());
+ const inferredHeaders=shouldInferHeaders(first,filtered[1]?.map(v=>String(v??"").trim()));
+ const values=inferredHeaders?[["词语","释义"],...filtered]:filtered;
+ if(values.length<2)throw new Error("至少需要一行表头和一行数据");
+ const counters=new Map<string,number>();
+ const headers=values[0].map((raw,i)=>{
+  const name=String(raw??"").replace(/^\uFEFF/,"").trim()||"未命名列"+(i+1);
+  const n=(counters.get(name)??0)+1;counters.set(name,n);
+  return n===1?name:name+" ("+n+")";
+ });
+ if(headers.length<2)throw new Error("至少需要词语、释义两列");
+ if(values.length-1>LIMIT)throw new Error("单次最多 10,000 行");
+ const rows=values.slice(1).map(line=>Object.fromEntries(headers.map((header,i)=>[header,String(line[i]??"").trim()])));
+ return {headers,rows,fileName,sheets,selectedSheet,inferredHeaders};
+}
+
 export function parsePastedText(content: string): ParsedFile {
   if (!content.trim()) throw new Error("请先粘贴两列词汇内容");
   if (content.length > 4_000_000) throw new Error("粘贴内容过大，建议使用文件导入");
@@ -85,7 +103,6 @@ export function parsePastedText(content: string): ParsedFile {
 
 export async function parseFile(file: File, sheetName?: string): Promise<ParsedFile> {
   if (file.size > MAX_FILE_BYTES) throw new Error("文件超过 24MB，请按单元拆分导入");
-  if(file.size>24*1024*1024)throw new Error("文件超过 24MB，请拆分导入");
   const ext = file.name.split(".").at(-1)?.toLowerCase();
   if (["csv", "txt", "tsv"].includes(ext || ""))
     return toParsed(parseDelimitedText(decodeText(await file.arrayBuffer())), file.name);

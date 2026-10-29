@@ -37,6 +37,7 @@ export default function Import() {
   const [createdId, setCreatedId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [pasteValue,setPasteValue]=useState("");
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteValue, setPasteValue] = useState("");
   const [mappingConfirmed, setMappingConfirmed] = useState(false);
@@ -53,6 +54,14 @@ export default function Import() {
   const previewWord = mapping.word && previewRow?.[mapping.word];
   const previewMeaning = mapping.meaning && previewRow?.[mapping.meaning];
 
+  const pasteCards = () => {
+    try{
+      const result=parsePastedText(pasteValue);
+      setParsed(result);setSource(null);
+      setMapping(autoMapColumns(result.headers));
+      setBookName("快速粘贴词书");setStep("map");setError("");
+    }catch(e){setError(e instanceof Error?e.message:"粘贴数据解析失败");}
+  };
   const handleFile = async (file: File, sheet?: string) => {
     setLoading(true);
     setError("");
@@ -179,6 +188,13 @@ export default function Import() {
             <button className="btn btn-secondary" disabled={!pasteValue.trim()} onClick={handlePastedText}>
               解析粘贴内容 <ArrowRight size={16}/>
             </button>
+          </details>
+          <details className="paste-quick">
+            <summary>直接粘贴 Excel / WPS 两列内容</summary>
+            <p>无需另存为 CSV。支持「单词 + 释义」两列，制表符或逗号分隔。</p>
+            <textarea rows={5} value={pasteValue} onChange={e=>setPasteValue(e.target.value)}
+              placeholder={"casa\t房子\nolá\t你好"}/>
+            <button type="button" className="btn btn-secondary" onClick={pasteCards} disabled={!pasteValue.trim()}>解析粘贴词卡 <ArrowRight size={16}/></button>
           </details>
           <div className="upload-footnotes">
             <div><FileSpreadsheet size={19}/><strong>直接使用现有表格</strong><p>第一行作为表头，支持 Excel 多工作表。</p></div>

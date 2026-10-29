@@ -244,3 +244,5 @@ button, .btn, .deck-card, .nav-item { transition: background-color .16s, border-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+.route-loading { padding: 70px 10px; text-align: center; color: #718575; font-size: 13px; }

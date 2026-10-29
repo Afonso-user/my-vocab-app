@@ -12,7 +12,9 @@ export function buildExamDrill(
     const due = fsrs ? Date.parse(fsrs.dueAt) : NaN;
     const overdueDays = Number.isFinite(due) ? Math.max(0, (now - due) / 86400000) : 0;
     const stability = fsrs ? Number(fsrs.stability) : NaN;
-    const difficult = p?.lastGrade === "again" ? 160 : p?.lastGrade === "hard" ? 75 : 0;
+    const difficult = (p?.lastGrade === "again" ? 160 : p?.lastGrade === "hard" ? 75 : 0)
+      + (p?.cramLastGrade === "again" ? 150 : p?.cramLastGrade === "hard" ? 60 : 0)
+      + Math.min(10,p?.cramAgainCount ?? 0) * 9;
     const unread = !p?.seenCount ? 65 : 0;
     const weak = Number.isFinite(stability) ? 65 / (Math.max(.1, stability) + .6) : 0;
     const score = Math.min(overdueDays, 30) * 50 + difficult + unread + weak + random() * 10;

@@ -9,6 +9,7 @@ export type ParsedFile = {
   inferredHeaders?: boolean;
 };
 const LIMIT = 10000;
+const workbooks = new WeakMap<File, import('xlsx').WorkBook>();
 const MAX_FILE_BYTES = 24 * 1024 * 1024;
 const workbookCache = new WeakMap<File, WorkBook>();
 
@@ -51,6 +52,7 @@ export function parseDelimitedText(content: string): string[][] {
       if (ch === "\r" && text[i+1] === "\n") i++;
       row.push(field.trim());
       if (row.some(Boolean)) rows.push(row);
+      if (rows.length > LIMIT + 2) throw new Error('最多允许 10,000 行');
       if (rows.length > LIMIT + 2) throw new Error("单次最多支持 10,000 行数据");
       row = []; field = "";
     } else field += ch;
@@ -75,6 +77,15 @@ function shouldInferHeaders(first: string[], second?: string[]): boolean {
   return (hanA !== hanB || (/\S/.test(a) && /\S/.test(b) && !/\d{4}[-/.]\d{1,2}/.test(a)));
 }
 
+export function parsePastedText(text: string): ParsedFile {
+ if(!text.trim())throw new Error("请先粘贴两列词汇数据");
+ if(text.length>4000000)throw new Error("粘贴过大，请使用文件导入");
+ const data=parseDelimitedText(text);
+ if(data.length<2)throw new Error("至少需要两行数据");
+ const first=data[0];
+ const hasHeader=first.some(v=>/^(word|meaning|lemma|palavra|significado|中文|单词|词语|释义|葡语|葡文|翻译|外语|题目|答案|front|back)$/i.test(v));
+ return toParsed(hasHeader?data:[["词语","释义"],...data],"粘贴词卡");
+}
 function toParsed(data: unknown[][], fileName: string, sheets?: string[], selectedSheet?: string): ParsedFile {
   const filtered = data.filter(line => line.some(v => String(v ?? "").trim()));
   if (filtered.length === 0) throw new Error("文件中没有有效数据");
@@ -103,6 +114,7 @@ export function parsePastedText(content: string): ParsedFile {
 
 export async function parseFile(file: File, sheetName?: string): Promise<ParsedFile> {
   if (file.size > MAX_FILE_BYTES) throw new Error("文件超过 24MB，请按单元拆分导入");
+  if(file.size>24*1024*1024)throw new Error("文件超过 24MB，请拆分导入");
   const ext = file.name.split(".").at(-1)?.toLowerCase();
   if (["csv", "txt", "tsv"].includes(ext || ""))
     return toParsed(parseDelimitedText(decodeText(await file.arrayBuffer())), file.name);

@@ -1,4 +1,4 @@
-name: Publish rapid study standalone preview
+name: Publish verified V4 flashcard workflow
 on:
   push:
     branches: [feat/exam-flashcards-fsrs-20261029]
@@ -46,6 +46,6 @@ jobs:
             echo "Safety check: changes outside rapid/ rejected."
             exit 1
           fi
-          git commit -m "Publish rapid one-screen flashcards from $GITHUB_SHA"
+          git commit -m "Publish V4 two-stage exam flashcards from $GITHUB_SHA"
           git pull --rebase origin gh-pages
           git push origin HEAD:gh-pages

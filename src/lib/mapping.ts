@@ -114,39 +114,6 @@ export function suggestColumns(headers: string[]): MappingSuggestion {
   return { mapping, confidence, ambiguous };
 }
 
-export type MappingSuggestion = { mapping: Record<FieldKey,string|null>; confidence: Partial<Record<FieldKey,number>>; ambiguous: FieldKey[] };
-function scoreHeader(field:FieldKey, header:string):number {
- const h=normalize(header);
- if(!h)return 0;
- if(field==="meaning" && /(例句|短语|固定搭配|同义|近义)/.test(header))return 0;
- if(field==="word" && /(释义|例句|意思|翻译|音标|解释)/.test(header))return 0;
- if(field==="example" && /(翻译|中文|释义)/.test(header))return 0;
- return AUTO_PATTERNS_COMPAT(field).reduce((score,a)=>{
-  const alias=normalize(a);
-  if(h===alias)return Math.max(score,100);
-  if(alias.length>=2 && h.startsWith(alias))return Math.max(score,88);
-  if(alias.length>=3 && h.endsWith(alias))return Math.max(score,77);
-  if(alias.length>=3 && h.includes(alias))return Math.max(score,59);
-  return score;
- },0);
-}
-function AUTO_PATTERNS_COMPAT(field:FieldKey){return ALIASES[field]}
-export function suggestColumns(headers:string[]):MappingSuggestion {
- const mapping=Object.fromEntries(Object.keys(FIELD_LABELS).map(key=>[key,null])) as Record<FieldKey,string|null>;
- const confidence:Partial<Record<FieldKey,number>>={};
- const candidates:{field:FieldKey; header:string; score:number}[]=[];
- for(const field of Object.keys(FIELD_LABELS) as FieldKey[])
-  for(const header of headers){const score=scoreHeader(field,header);if(score>=55)candidates.push({field,header,score})}
- candidates.sort((a,b)=>b.score-a.score||b.header.length-a.header.length);
- const claimed=new Set<string>();
- for(const c of candidates)if(!mapping[c.field]&&!claimed.has(c.header)){mapping[c.field]=c.header;confidence[c.field]=c.score;claimed.add(c.header)}
- if(headers.length===2){
-  if(!mapping.word&&!claimed.has(headers[0])){mapping.word=headers[0];confidence.word=30}
-  if(!mapping.meaning&&!claimed.has(headers[1])&&headers[1]!==mapping.word){mapping.meaning=headers[1];confidence.meaning=30}
- }
- const ambiguous=REQUIRED_FIELDS.filter(field=>!mapping[field]||(confidence[field]??0)<55);
- return {mapping,confidence,ambiguous};
-}
 export function autoMapColumns(headers:string[]):Record<FieldKey,string|null> {
  return suggestColumns(headers).mapping;
 }

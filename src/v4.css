@@ -435,3 +435,30 @@
 @media (prefers-reduced-motion: reduce) {
   .v4-back, .v4-rating, .v4-confirm-grid button { animation: none; transition: none; }
 }
+
+
+/* Final visual QA: reveal content must be fully legible on its very first frame.
+   The answer stack is vertically balanced rather than leaving a giant empty lower half. */
+.rapid-v4 .v4-back {
+  animation: none !important;
+  justify-content: center;
+  position: relative;
+  padding-bottom: 39px;
+}
+.rapid-v4 .v4-context {
+  flex: 0 1 auto;
+  max-height: 35%;
+}
+.rapid-v4 .v4-context-empty { display: none; }
+.rapid-v4 .v4-all-details {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  margin: 0;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+@media (max-height: 660px) {
+  .rapid-v4 .v4-back { padding-bottom: 32px; }
+  .rapid-v4 .v4-context { max-height: 30%; }
+}

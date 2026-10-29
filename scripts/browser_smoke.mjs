@@ -43,7 +43,7 @@ try {
     throw error;
   }
   await shot("390-import-map");
-  await page.getByRole("button", { name: /确认映射/ }).click();
+  await page.getByRole("button", { name: /高级设置/ }).click();
   await page.getByRole("heading", { name: "设置你的学习节奏" }).waitFor();
   await page.getByRole("button", { name: /创建词书/ }).click();
   await page.getByRole("heading", { name: /准备好了/ }).waitFor();

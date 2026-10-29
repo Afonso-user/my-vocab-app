@@ -125,7 +125,7 @@ export default function Review() {
 
   /** Phase two: only the final verification writes a review event. */
   function confirm(mistake: boolean) {
-    if (!word || selectedGrade === null || lock.current || showSettings || showDetails) return;
+    if (!current || !word || selectedGrade === null || lock.current || showSettings || showDetails) return;
     lock.current = true;
     const grade = finalReviewGrade(selectedGrade, mistake);
     const previous = records[word.id];

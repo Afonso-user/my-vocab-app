@@ -1,13 +1,13 @@
-import {useEffect,useState} from "react";
+import {useState} from "react";
 import {Link} from "react-router-dom";
 import {ArrowRight,BookOpen,Download,FilePlus2,ShieldCheck,Trash2,Upload} from "lucide-react";
 import {deleteWordbook,exportBackup,getProgress,getWordbookItems,listWordbooks,restoreBackup} from "../lib/store";
 import {isDue} from "../lib/fsrs";
 import type {WordbookMeta} from "../types";
 export default function Dashboard(){
- const [books,setBooks]=useState<WordbookMeta[]>([]),[deleting,setDeleting]=useState<string|null>(null),[message,setMessage]=useState("");
+ const [books,setBooks]=useState<WordbookMeta[]>(() => listWordbooks().sort((a,b)=>b.createdAt.localeCompare(a.createdAt))),[deleting,setDeleting]=useState<string|null>(null),[message,setMessage]=useState("");
  const refresh=()=>setBooks(listWordbooks().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));
- useEffect(refresh,[]);
+
  const counts=(id:string)=>{const p=getProgress(id),items=getWordbookItems(id);return {total:items.length,studied:items.filter(i=>p[i.id]?.seenCount).length,due:items.filter(i=>isDue(p[i.id])).length,newWords:items.filter(i=>!p[i.id]?.fsrs).length}};
  const summary=books.map(b=>counts(b.id)).reduce((p,c)=>({total:p.total+c.total,studied:p.studied+c.studied,due:p.due+c.due,newWords:p.newWords+c.newWords}),{total:0,studied:0,due:0,newWords:0});
  const backup=()=>{const url=URL.createObjectURL(new Blob([exportBackup()],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download="记忆工坊备份-"+new Date().toISOString().slice(0,10)+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};

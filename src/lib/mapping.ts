@@ -25,7 +25,7 @@ export const FIELD_GROUPS: { label: string; keys: FieldKey[] }[] = [
 ];
 
 const ALIASES: Record<FieldKey, string[]> = {
-  word: ["word", "term", "lemma", "palavra", "vocab", "vocabulary", "portuguese", "englishword", "foreignword", "单词", "词汇", "外语", "葡语", "葡文", "英语", "原词", "术语", "题目", "正面", "front", "词条"],
+  word: ["word", "term", "lemma", "palavra", "vocab", "vocabulary", "portuguese", "englishword", "foreignword", "单词", "词汇", "外语", "葡语", "葡语单词", "葡文", "葡文单词", "外语单词", "英语", "英语单词", "原词", "术语", "题目", "正面", "front", "词条"],
   meaning: ["meaning", "translation", "chinese", "definitionzh", "answer", "back", "释义", "中文", "中文释义", "翻译", "意思", "含义", "解释", "答案", "背面", "中文翻译"],
   pronunciation: ["pronunciation", "phonetic", "ipa", "发音", "音标", "读音"],
   partOfSpeech: ["pos", "partofspeech", "wordclass", "词性", "词类"],

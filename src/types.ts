@@ -66,6 +66,9 @@ export type StudyProgress = {
   lastGrade: Grade | null;
   lastSeenAt: string | null;
   legacySeen?: boolean;
+  cramLastGrade?: Grade;
+  cramAgainCount?: number;
+  cramLastAt?: string;
   fsrs?: StoredFsrsCard;
   history?: ReviewLog[];
 };

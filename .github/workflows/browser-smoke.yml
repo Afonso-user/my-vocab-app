@@ -41,3 +41,10 @@ jobs:
           name: study-edition-mobile-screenshots
           path: artifacts/ui/
           if-no-files-found: ignore
+      - name: Export built static preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: study-edition-preview-dist
+          path: dist/
+          if-no-files-found: ignore

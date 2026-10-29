@@ -7,6 +7,7 @@ const OUT = "artifacts/ui";
 await mkdir(OUT, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+page.on("pageerror", error => console.error("PAGE ERROR:", error.stack || error.message));
 async function shot(name) {
   const horizontalOverflow = await page.evaluate(() =>
     Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) >
@@ -26,7 +27,13 @@ try {
     mimeType: "text/csv",
     buffer: Buffer.from("word,meaning,example,exampleZh,notes\ncasa,房子,Esta casa é grande.,这所房子很大。,名词\nolá,你好,Olá amigo!,你好朋友!,问候语"),
   });
-  await page.getByRole("heading", { name: "选择词卡字段" }).waitFor();
+  try { await page.getByRole("heading", { name: "选择词卡字段" }).waitFor({timeout:5000}); }
+  catch (error) {
+    console.error("IMPORT URL:", page.url());
+    console.error("IMPORT BODY:", (await page.locator("body").innerText()).slice(0,2000));
+    await page.screenshot({ path: OUT + "/390-import-debug.png", fullPage: true });
+    throw error;
+  }
   await shot("390-import-map");
   await page.getByRole("button", { name: /确认映射/ }).click();
   await page.getByRole("heading", { name: "设置你的学习节奏" }).waitFor();

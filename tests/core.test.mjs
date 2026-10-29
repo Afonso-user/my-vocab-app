@@ -145,3 +145,38 @@ test("Cram order prioritizes overdue and forgotten words without mutating record
   assert.deepEqual(results.map(x=>x.item.id), ["overdue","forgot","mature"]);
   assert.equal(JSON.stringify(records), snapshot);
 });
+
+
+test("V4: provisional confidence is reversible and only confirmed ratings call FSRS", async () => {
+  const { finalReviewGrade } = await import("../src/lib/review-flow.ts");
+  assert.equal(finalReviewGrade("good", false), "good");
+  assert.equal(finalReviewGrade("easy", true), "again");
+  assert.equal(finalReviewGrade("hard", true), "again");
+  assert.equal(finalReviewGrade("again", false), "again");
+  const { item } = sample("v4");
+  const before = {};
+  const picked = "good";
+  assert.deepEqual(before, {}, "Selecting confidence must not write any progress");
+  const reviewed = schedule(undefined, item, finalReviewGrade(picked, true), 0.90);
+  assert.equal(reviewed.againCount, 1);
+  assert.equal(reviewed.goodCount, 0);
+  assert.equal(reviewed.seenCount, 1);
+  assert.equal(reviewed.history.length, 1);
+});
+
+test("V4: sprint mistakes persist but preserve real FSRS due dates and counters", async () => {
+  const { recordExamJudgment } = await import("../src/lib/review-flow.ts");
+  const { item } = sample("v4-cram");
+  const scheduled = schedule(undefined, item, "good", .9);
+  const saved = JSON.parse(JSON.stringify(scheduled));
+  const judgment = recordExamJudgment(scheduled, item, "again", new Date("2026-10-29T12:00:00Z"));
+  assert.equal(judgment.cramLastGrade, "again");
+  assert.equal(judgment.cramAgainCount, 1);
+  assert.deepEqual(judgment.fsrs, saved.fsrs);
+  assert.equal(judgment.seenCount, saved.seenCount);
+  assert.equal(judgment.againCount, saved.againCount);
+  assert.deepEqual(judgment.history, saved.history);
+  const repeated = recordExamJudgment(judgment, item, "hard");
+  assert.equal(repeated.cramAgainCount, 1);
+  assert.equal(repeated.cramLastGrade, "hard");
+});

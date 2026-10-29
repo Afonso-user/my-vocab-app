@@ -36,18 +36,12 @@ try {
   await page.goto(BASE + "/#/", { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: /我的词书/ }).waitFor();
   await page.getByRole("link", { name: /导入新词书/ }).click();
-  await page.locator('input[type="file"]').setInputFiles({
-    name: "rapid_exam.csv", mimeType: "text/csv",
-    buffer: Buffer.from("word,meaning,example,notes\ncasa,房子,Esta casa é grande.,易错点\nolá,你好,Olá amigo!,问候语\nlivro,书,Este livro é novo.,名词"),
-  });
-  try { await page.getByRole("heading", { name: "选择词卡字段" }).waitFor({timeout:7000}); }
-  catch(error) {
-    console.error("IMPORT CONTENT:",(await page.locator("body").innerText()).slice(0,2500));
-    const input = page.locator('input[type="file"]');
-    if(await input.count())console.error("INPUT STATE:",await input.evaluate(el=>({files:el.files?.length,disabled:el.disabled,value:el.value})));
-    await page.screenshot({path:"artifacts/ui/rapid-import-error.png",fullPage:true});
-    throw error;
-  }
+  await page.getByText("不想建 CSV？直接粘贴词语和释义").click();
+  await page.locator(".paste-box textarea").fill(
+    "word\\tmeaning\\texample\\tnotes\\ncasa\\t房子\\tEsta casa é grande.\\t易错点\\nolá\\t你好\\tOlá amigo!\\t问候语\\nlivro\\t书\\tEste livro é novo.\\t名词".replaceAll("\\t","\t").replaceAll("\\n","\n")
+  );
+  await page.getByRole("button",{name:/解析粘贴内容/}).click();
+  await page.getByRole("heading", { name: "选择词卡字段" }).waitFor();
   await page.getByRole("button", { name: /高级设置/ }).click();
   await page.getByRole("heading", { name: "设置你的学习节奏" }).waitFor();
   await page.getByRole("button", { name: /创建词书/ }).click();

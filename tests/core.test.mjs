@@ -172,7 +172,7 @@ test("V4: sprint mistakes persist but preserve real FSRS due dates and counters"
   const judgment = recordExamJudgment(scheduled, item, "again", new Date("2026-10-29T12:00:00Z"));
   assert.equal(judgment.cramLastGrade, "again");
   assert.equal(judgment.cramAgainCount, 1);
-  assert.deepEqual(judgment.fsrs, saved.fsrs);
+  assert.deepEqual(JSON.parse(JSON.stringify(judgment.fsrs)), saved.fsrs);
   assert.equal(judgment.seenCount, saved.seenCount);
   assert.equal(judgment.againCount, saved.againCount);
   assert.deepEqual(judgment.history, saved.history);

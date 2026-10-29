@@ -2,14 +2,14 @@ name: Validate exam flashcards
 on:
   pull_request:
     branches: [main]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    concurrency:
+concurrency:
   group: review-validate-${{ github.ref }}
   cancel-in-progress: true
 permissions:
-      contents: read
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

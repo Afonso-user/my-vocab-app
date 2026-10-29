@@ -1,103 +1,95 @@
-// 浏览器端 CSV / XLSX 文件解析
 import * as XLSX from "xlsx";
 
 export type ParsedFile = {
   headers: string[];
   rows: Record<string, string>[];
   fileName: string;
+  sheets?: string[];
+  selectedSheet?: string;
 };
+const LIMIT = 10000;
 
-export async function parseFile(file: File): Promise<ParsedFile> {
-  const ext = file.name.split(".").pop()?.toLowerCase();
-  if (ext === "csv" || ext === "txt") return parseCSV(file);
-  if (ext === "xlsx" || ext === "xls") return parseExcel(file);
-  throw new Error("不支持的文件格式，请上传 .csv / .xlsx / .xls 文件");
+function decodeText(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe)
+    return new TextDecoder("utf-16le").decode(bytes);
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff)
+    return new TextDecoder("utf-16be").decode(bytes);
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { return new TextDecoder("gb18030").decode(bytes); }
 }
 
-async function parseCSV(file: File): Promise<ParsedFile> {
-  const text = await readText(file);
-
-  // 检测分隔符
-  const firstLine = text.split(/\r?\n/)[0] || "";
-  const delim = firstLine.split(";").length > firstLine.split(",").length ? ";" : ",";
-
-  const lines = text.split(/\r?\n/);
-  if (lines.length < 2) throw new Error("文件至少需要包含表头行和一行数据");
-
-  const headers = parseCSVLine(lines[0], delim);
-  const rows: Record<string, string>[] = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const values = parseCSVLine(line, delim);
-    const row: Record<string, string> = {};
-    headers.forEach((h, idx) => { row[h] = values[idx]?.trim() ?? ""; });
-    if (Object.values(row).some((v) => v)) rows.push(row);
+function detectDelimiter(content: string): string {
+  const counts = new Map([",",";","\t","|"].map(x => [x, 0]));
+  let quoted = false;
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
+    if (c === '"') {
+      if (quoted && content[i+1] === '"') { i++; continue; }
+      quoted = !quoted;
+    } else if (!quoted && (c === "\n" || c === "\r")) break;
+    else if (!quoted && counts.has(c)) counts.set(c, counts.get(c)! + 1);
   }
-
-  if (rows.length === 0) throw new Error("文件中没有数据行");
-  if (rows.length > 5000) throw new Error("最多支持 5000 行数据");
-
-  return { headers, rows, fileName: file.name };
+  return [...counts.entries()].sort((a,b) => b[1]-a[1])[0][0];
 }
 
-async function parseExcel(file: File): Promise<ParsedFile> {
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: "array" });
-  const sheetName = wb.SheetNames[0];
-  if (!sheetName) throw new Error("文件中没有工作表");
-  const sheet = wb.Sheets[sheetName];
-  const data = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 }) as string[][];
-
-  if (data.length < 2) throw new Error("文件至少需要包含表头行和一行数据");
-
-  const headers = (data[0] || []).map((h) => String(h ?? "").trim());
-  const rows: Record<string, string>[] = [];
-
-  for (let i = 1; i < data.length; i++) {
-    const rowData = data[i] || [];
-    const row: Record<string, string> = {};
-    headers.forEach((h, idx) => { row[h] = String(rowData[idx] ?? "").trim(); });
-    if (Object.values(row).some((v) => v)) rows.push(row);
-  }
-
-  if (rows.length === 0) throw new Error("文件中没有数据行");
-  if (rows.length > 5000) throw new Error("最多支持 5000 行数据");
-
-  return { headers, rows, fileName: file.name };
-}
-
-function readText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsText(file);
-  });
-}
-
-// 解析 CSV 行（处理引号包裹和 BOM）
-function parseCSVLine(line: string, delim: string): string[] {
-  const BOM = "﻿";
-  let s = line.trim();
-  if (s.startsWith(BOM)) s = s.slice(1);
-  const result: string[] = [];
-  let current = "";
-  let inQuote = false;
-
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
+/** RFC-4180-style quoted fields, including embedded commas, line breaks and "" escaping. */
+export function parseDelimitedText(content: string): string[][] {
+  const text = content.replace(/^\uFEFF/, "");
+  const delim = detectDelimiter(text);
+  const rows: string[][] = [];
+  let row: string[] = [], field = "", quoted = false;
+  for (let i=0; i<text.length; i++) {
+    const ch = text[i];
     if (ch === '"') {
-      if (inQuote && s[i + 1] === '"') { current += '"'; i++; }
-      else { inQuote = !inQuote; }
-    } else if (ch === delim && !inQuote) {
-      result.push(current.trim());
-      current = "";
-    } else {
-      current += ch;
-    }
+      if (quoted && text[i+1] === '"') { field += '"'; i++; }
+      else if (quoted || field.trim() === "") quoted = !quoted;
+      else field += ch;
+    } else if (!quoted && ch === delim) {
+      row.push(field.trim()); field = "";
+    } else if (!quoted && (ch === "\n" || ch === "\r")) {
+      if (ch === "\r" && text[i+1] === "\n") i++;
+      row.push(field.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = []; field = "";
+    } else field += ch;
   }
-  result.push(current.trim());
-  return result;
+  if (quoted) throw new Error("CSV 引号未闭合，请检查原表格或重新导出");
+  row.push(field.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+function toParsed(data: unknown[][], fileName: string, sheets?: string[], selectedSheet?: string): ParsedFile {
+  if (data.length < 2) throw new Error("需要至少一行表头和一行词语数据");
+  const counts = new Map<string, number>();
+  const headers = data[0].map((cell,i) => {
+    const base = String(cell ?? "").replace(/^\uFEFF/, "").trim() || "未命名列" + (i+1);
+    const n = (counts.get(base) ?? 0) + 1;
+    counts.set(base, n);
+    return n === 1 ? base : base + " (" + n + ")";
+  });
+  if (headers.length < 2) throw new Error("至少需要词语、释义两列");
+  const rows = data.slice(1).filter(line => line.some(v => String(v ?? "").trim()))
+    .map(line => Object.fromEntries(headers.map((h,i) => [h, String(line[i] ?? "").trim()])));
+  if (rows.length === 0) throw new Error("没有可导入的数据行");
+  if (rows.length > LIMIT) throw new Error("单次最多 10,000 行，请将词库分成多本");
+  return { headers, rows, fileName, sheets, selectedSheet };
+}
+
+export async function parseFile(file: File, sheetName?: string): Promise<ParsedFile> {
+  const ext = file.name.split(".").at(-1)?.toLowerCase();
+  if (ext === "csv" || ext === "txt" || ext === "tsv") {
+    return toParsed(parseDelimitedText(decodeText(await file.arrayBuffer())), file.name);
+  }
+  if (ext !== "xlsx" && ext !== "xls") throw new Error("请选择 .csv / .tsv / .xlsx / .xls 文件");
+  const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false, raw: true });
+  const sheets = wb.SheetNames;
+  const chosen = sheetName && sheets.includes(sheetName) ? sheetName : sheets.find(name => {
+    const data = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, defval: "", raw: false });
+    return data.length > 1;
+  });
+  if (!chosen) throw new Error("文件中没有包含数据的工作表");
+  const data = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[chosen], { header: 1, defval: "", raw: false });
+  return toParsed(data, file.name, sheets, chosen);
 }

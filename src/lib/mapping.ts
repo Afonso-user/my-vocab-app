@@ -25,13 +25,13 @@ export const FIELD_GROUPS: { label: string; keys: FieldKey[] }[] = [
 ];
 
 const ALIASES: Record<FieldKey, string[]> = {
-  word: ["word", "term", "lemma", "palavra", "vocábulo", "vocabulário", "vocab", "vocabulary", "portuguese", "português", "portugues", "foreign term", "foreignword", "englishword", "foreignword", "单词", "词汇", "词语", "外语", "葡语", "葡语单词", "葡文", "葡文单词", "外语单词", "英语", "英语单词", "原词", "术语", "题目", "正面", "front", "词条"],
-  meaning: ["meaning", "translation", "chinese", "significado", "definicao", "definição", "definition", "definitionzh", "answer", "back", "释义", "中文", "中文释义", "中文翻译", "汉语翻译", "翻译", "意思", "含义", "解释", "答案", "背面", "中文翻译"],
+  word: ["word", "term", "lemma", "palavra", "vocábulo", "vocabulário", "português", "portugues", "vocábulo", "vocabulário", "vocab", "vocabulary", "portuguese", "português", "portugues", "foreign term", "foreignword", "englishword", "foreignword", "单词", "词汇", "词语", "词语", "外语", "葡语", "葡语单词", "葡文", "葡文单词", "外语单词", "英语", "英语单词", "原词", "术语", "题目", "正面", "front", "词条"],
+  meaning: ["meaning", "translation", "chinese", "significado", "definição", "definicao", "significado", "definicao", "definição", "definition", "definitionzh", "answer", "back", "释义", "中文", "中文释义", "中文翻译", "汉语翻译", "翻译", "意思", "含义", "解释", "答案", "背面", "中文翻译"],
   pronunciation: ["pronunciation", "phonetic", "ipa", "发音", "音标", "读音"],
   partOfSpeech: ["pos", "partofspeech", "wordclass", "词性", "词类"],
   gender: ["gender", "grammaticalgender", "阴阳性", "名词性别"],
   plural: ["plural", "复数", "复数形式"],
-  example: ["example", "sentence", "examplesentence", "exemplo", "frase", "fraseexemplo", "examplept", "葡语例句", "外语例句", "例句", "用例", "例句原文"],
+  example: ["example", "sentence", "exemplo", "examplesentence", "exemplo", "frase", "fraseexemplo", "examplept", "葡语例句", "外语例句", "例句", "用例", "例句原文"],
   exampleZh: ["examplezh", "sentencezh", "traduçãodoexemplo", "traducaodoexemplo", "exampletranslation", "sentencechinese", "例句翻译", "例句中文", "中文例句", "例句释义"],
   collocations: ["collocation", "collocations", "expressão", "expressoes", "phrase", "phrases", "搭配", "固定搭配", "短语", "词组"],
   synonyms: ["synonym", "synonyms", "近义词", "同义词"],
@@ -113,8 +113,42 @@ export function suggestColumns(headers: string[]): MappingSuggestion {
   }
   return { mapping, confidence, ambiguous };
 }
-export function autoMapColumns(headers: string[]): Record<FieldKey, string | null> {
-  return suggestColumns(headers).mapping;
+
+export type MappingSuggestion = { mapping: Record<FieldKey,string|null>; confidence: Partial<Record<FieldKey,number>>; ambiguous: FieldKey[] };
+function scoreHeader(field:FieldKey, header:string):number {
+ const h=normalize(header);
+ if(!h)return 0;
+ if(field==="meaning" && /(例句|短语|固定搭配|同义|近义)/.test(header))return 0;
+ if(field==="word" && /(释义|例句|意思|翻译|音标|解释)/.test(header))return 0;
+ if(field==="example" && /(翻译|中文|释义)/.test(header))return 0;
+ return AUTO_PATTERNS_COMPAT(field).reduce((score,a)=>{
+  const alias=normalize(a);
+  if(h===alias)return Math.max(score,100);
+  if(alias.length>=2 && h.startsWith(alias))return Math.max(score,88);
+  if(alias.length>=3 && h.endsWith(alias))return Math.max(score,77);
+  if(alias.length>=3 && h.includes(alias))return Math.max(score,59);
+  return score;
+ },0);
+}
+function AUTO_PATTERNS_COMPAT(field:FieldKey){return ALIASES[field]}
+export function suggestColumns(headers:string[]):MappingSuggestion {
+ const mapping=Object.fromEntries(Object.keys(FIELD_LABELS).map(key=>[key,null])) as Record<FieldKey,string|null>;
+ const confidence:Partial<Record<FieldKey,number>>={};
+ const candidates:{field:FieldKey; header:string; score:number}[]=[];
+ for(const field of Object.keys(FIELD_LABELS) as FieldKey[])
+  for(const header of headers){const score=scoreHeader(field,header);if(score>=55)candidates.push({field,header,score})}
+ candidates.sort((a,b)=>b.score-a.score||b.header.length-a.header.length);
+ const claimed=new Set<string>();
+ for(const c of candidates)if(!mapping[c.field]&&!claimed.has(c.header)){mapping[c.field]=c.header;confidence[c.field]=c.score;claimed.add(c.header)}
+ if(headers.length===2){
+  if(!mapping.word&&!claimed.has(headers[0])){mapping.word=headers[0];confidence.word=30}
+  if(!mapping.meaning&&!claimed.has(headers[1])&&headers[1]!==mapping.word){mapping.meaning=headers[1];confidence.meaning=30}
+ }
+ const ambiguous=REQUIRED_FIELDS.filter(field=>!mapping[field]||(confidence[field]??0)<55);
+ return {mapping,confidence,ambiguous};
+}
+export function autoMapColumns(headers:string[]):Record<FieldKey,string|null> {
+ return suggestColumns(headers).mapping;
 }
 
 export type ImportError = { row: number; message: string };

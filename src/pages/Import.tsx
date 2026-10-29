@@ -139,10 +139,11 @@ export default function Import() {
             <span className="upload-badge">在浏览器内解析 · 不上传服务器</span>
             <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls"
               disabled={loading}
+              onClick={event => { event.currentTarget.value = ""; }}
               onChange={event => {
-                const file = event.target.files?.[0];
+                const file = event.currentTarget.files?.item(0);
                 if (file) void handleFile(file);
-                event.target.value = "";
+                else setError("没有读取到文件，请重新选择");
               }} />
           </label>
           <div className="upload-footnotes">

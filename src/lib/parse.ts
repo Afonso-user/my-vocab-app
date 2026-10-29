@@ -77,35 +77,6 @@ function shouldInferHeaders(first: string[], second?: string[]): boolean {
   return (hanA !== hanB || (/\S/.test(a) && /\S/.test(b) && !/\d{4}[-/.]\d{1,2}/.test(a)));
 }
 
-export function parsePastedText(text: string): ParsedFile {
- if(!text.trim())throw new Error("请先粘贴两列词汇数据");
- if(text.length>4000000)throw new Error("粘贴过大，请使用文件导入");
- const data=parseDelimitedText(text);
- if(data.length<2)throw new Error("至少需要两行数据");
- const first=data[0];
- const hasHeader=first.some(v=>/^(word|meaning|lemma|palavra|significado|中文|单词|词语|释义|葡语|葡文|翻译|外语|题目|答案|front|back)$/i.test(v));
- return toParsed(hasHeader?data:[["词语","释义"],...data],"粘贴词卡");
-}
-function toParsed(data: unknown[][], fileName: string, sheets?: string[], selectedSheet?: string): ParsedFile {
-  const filtered = data.filter(line => line.some(v => String(v ?? "").trim()));
-  if (filtered.length === 0) throw new Error("文件中没有有效数据");
-  const first = filtered[0].map(x => String(x ?? "").trim());
-  const inferredHeaders = shouldInferHeaders(first, filtered[1]?.map(x => String(x ?? "").trim()));
-  const values = inferredHeaders ? [["词语", "释义"], ...filtered] : filtered;
-  if (values.length < 2) throw new Error("至少需要一行词语数据和两列内容");
-  const counts = new Map<string, number>();
-  const headers = values[0].map((cell, i) => {
-    const base = String(cell ?? "").replace(/^\uFEFF/, "").trim() || "未命名列" + (i+1);
-    const count = (counts.get(base) ?? 0) + 1;
-    counts.set(base, count);
-    return count === 1 ? base : base + " (" + count + ")";
-  });
-  if (headers.length < 2) throw new Error("至少需要词语和释义两列");
-  if (values.length - 1 > LIMIT) throw new Error("单次最多 10,000 行，请拆成多本词书");
-  const rows = values.slice(1).map(line => Object.fromEntries(headers.map((header, i) => [header, String(line[i] ?? "").trim()])));
-  return { headers, rows, fileName, sheets, selectedSheet, inferredHeaders };
-}
-
 export function parsePastedText(content: string): ParsedFile {
   if (!content.trim()) throw new Error("请先粘贴两列词汇内容");
   if (content.length > 4_000_000) throw new Error("粘贴内容过大，建议使用文件导入");

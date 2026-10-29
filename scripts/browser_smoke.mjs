@@ -34,7 +34,7 @@ try {
     mimeType: "text/csv",
     buffer: Buffer.from("word,meaning,example,exampleZh,notes\ncasa,房子,Esta casa é grande.,这所房子很大。,名词\nolá,你好,Olá amigo!,你好朋友!,问候语"),
   });
-  console.log("FILE INPUT STATE:", JSON.stringify(await page.locator('input[type="file"]').evaluate(node => ({value:node.value, files:Array.from(node.files || []).map(f => [f.name,f.size]), disabled:node.disabled}))));
+  // The input unmounts as soon as a successful import advances to the mapping step.
   try { await page.getByRole("heading", { name: "选择词卡字段" }).waitFor({timeout:5000}); }
   catch (error) {
     console.error("IMPORT URL:", page.url());

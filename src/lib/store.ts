@@ -1,42 +1,13 @@
-// localStorage 词书存取
-import type { VocabularyItem, WordbookMeta } from "../types";
-
-const REGISTRY_KEY = "vocab-wordbooks";
-const ITEMS_PREFIX = "vocab-items:";
-
-export function listWordbooks(): WordbookMeta[] {
-  try {
-    return JSON.parse(localStorage.getItem(REGISTRY_KEY) || "[]") as WordbookMeta[];
-  } catch {
-    return [];
-  }
-}
-
-export function getWordbook(id: string): WordbookMeta | null {
-  return listWordbooks().find((w) => w.id === id) || null;
-}
-
-export function getWordbookItems(id: string): VocabularyItem[] {
-  try {
-    return JSON.parse(localStorage.getItem(ITEMS_PREFIX + id) || "[]") as VocabularyItem[];
-  } catch {
-    return [];
-  }
-}
-
-export function saveWordbook(
-  meta: WordbookMeta,
-  items: VocabularyItem[]
-): void {
-  const books = listWordbooks().filter((w) => w.id !== meta.id);
-  books.push(meta);
-  localStorage.setItem(REGISTRY_KEY, JSON.stringify(books));
-  localStorage.setItem(ITEMS_PREFIX + meta.id, JSON.stringify(items));
-}
-
-export function deleteWordbook(id: string): void {
-  const books = listWordbooks().filter((w) => w.id !== id);
-  localStorage.setItem(REGISTRY_KEY, JSON.stringify(books));
-  localStorage.removeItem(ITEMS_PREFIX + id);
-  localStorage.removeItem("vocab-study:" + id);
-}
+import type {VocabularyItem,WordbookMeta,StudyProgress} from "../types";
+const ROOT="vocab-wordbooks",ITEMS="vocab-items:",STUDY="vocab-fsrs:";
+function read<T>(key:string,fallback:T):T{try{return JSON.parse(localStorage.getItem(key)??"null")??fallback}catch{return fallback}}
+export function listWordbooks(){return read<WordbookMeta[]>(ROOT,[])}
+export function getWordbook(id:string){return listWordbooks().find(b=>b.id===id)??null}
+export function getWordbookItems(id:string){return read<VocabularyItem[]>(ITEMS+id,[])}
+export function getProgress(id:string){return read<Record<string,StudyProgress>>(STUDY+id,{})}
+export function saveProgress(id:string,p:Record<string,StudyProgress>){localStorage.setItem(STUDY+id,JSON.stringify(p))}
+export function saveWordbook(b:WordbookMeta,items:VocabularyItem[]){localStorage.setItem(ITEMS+b.id,JSON.stringify(items));localStorage.setItem(ROOT,JSON.stringify([...listWordbooks().filter(x=>x.id!==b.id),b]))}
+export function updateWordbook(b:WordbookMeta){localStorage.setItem(ROOT,JSON.stringify(listWordbooks().map(x=>x.id===b.id?b:x)))}
+export function deleteWordbook(id:string){localStorage.setItem(ROOT,JSON.stringify(listWordbooks().filter(x=>x.id!==id)));localStorage.removeItem(ITEMS+id);localStorage.removeItem(STUDY+id);localStorage.removeItem("vocab-study:"+id)}
+export function exportBackup(){return JSON.stringify({app:"my-vocab-app",schema:2,exportedAt:new Date().toISOString(),books:listWordbooks().map(meta=>({meta,items:getWordbookItems(meta.id),progress:getProgress(meta.id)}))},null,2)}
+export function restoreBackup(text:string){const body=JSON.parse(text);if(body.app!=="my-vocab-app"||body.schema!==2||!Array.isArray(body.books))throw Error("备份格式不正确");const existing=listWordbooks();const prepared: {meta:WordbookMeta,items:VocabularyItem[],progress:Record<string,StudyProgress>}[]=body.books.map((b: {meta:WordbookMeta,items:VocabularyItem[],progress:Record<string,StudyProgress>})=>{if(!b.meta?.id||!Array.isArray(b.items)||!b.progress)throw Error("备份损坏");if(existing.some(e=>e.id===b.meta.id)){const id="restored-"+crypto.randomUUID();return {meta:{...b.meta,id,name:b.meta.name+"（恢复）"},items:b.items.map((x,i)=>({...x,id:id+"-"+i,wordbookId:id})),progress:{}}}return b});const written:string[]=[];try{for(const b of prepared){localStorage.setItem(ITEMS+b.meta.id,JSON.stringify(b.items));written.push(ITEMS+b.meta.id);localStorage.setItem(STUDY+b.meta.id,JSON.stringify(b.progress));written.push(STUDY+b.meta.id)}localStorage.setItem(ROOT,JSON.stringify([...existing,...prepared.map(b=>b.meta)]))}catch(e){written.forEach(k=>localStorage.removeItem(k));throw e}return prepared.length}

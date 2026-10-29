@@ -63,7 +63,6 @@ export default function Review() {
   const [speechLanguage, setSpeechLanguage] = useState<"pt-BR" | "pt-PT" | "en-US">("pt-BR");
   const [message, setMessage] = useState("");
 
-  useEffect(() => setProgress(getProgress(wordbookId)), [wordbookId]);
   const fresh = items.filter(item => !progress[item.id]?.fsrs);
   const due = items.filter(item => isDue(progress[item.id]))
     .sort((a, b) => new Date(progress[a.id]?.fsrs?.dueAt ?? 0).getTime()

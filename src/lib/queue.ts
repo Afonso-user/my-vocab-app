@@ -15,7 +15,7 @@ export function buildExamDrill(
     const difficult = p?.lastGrade === "again" ? 160 : p?.lastGrade === "hard" ? 75 : 0;
     const unread = !p?.seenCount ? 65 : 0;
     const weak = Number.isFinite(stability) ? 65 / (Math.max(.1, stability) + .6) : 0;
-    const score = Math.min(overdueDays, 30) * 20 + difficult + unread + weak + random() * 10;
+    const score = Math.min(overdueDays, 30) * 50 + difficult + unread + weak + random() * 10;
     return { item, score };
   });
   annotated.sort((a, b) => b.score - a.score);

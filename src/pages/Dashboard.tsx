@@ -1,109 +1,16 @@
-import { useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
-import { Trash2, BookOpen, PlusCircle } from "lucide-react";
-import type { WordbookMeta, WordStudyRecord } from "../types";
-import {
-  listWordbooks,
-  deleteWordbook,
-} from "../lib/store";
-import { loadRecords } from "../lib/study";
-
-export default function Dashboard() {
-  const [books, setBooks] = useState<WordbookMeta[]>([]);
-  const [progressMap, setProgressMap] = useState<Record<string, { learned: number; total: number }>>({});
-  const [deleteTarget, setDeleteTarget] = useState<WordbookMeta | null>(null);
-
-  const refresh = useCallback(() => {
-    const list = listWordbooks();
-    // 最新导入的排前面
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    setBooks(list);
-
-    // 计算每本词书学习进度
-    const map: Record<string, { learned: number; total: number }> = {};
-    for (const book of list) {
-      const records = loadRecords(book.id);
-      const learned = Object.values(records).filter(
-        (r: WordStudyRecord) => r.firstLearnedAt !== null || r.seenCount > 0
-      ).length;
-      map[book.id] = { learned, total: book.wordCount };
-    }
-    setProgressMap(map);
-  }, []);
-
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const handleDelete = (book: WordbookMeta) => {
-    deleteWordbook(book.id);
-    refresh();
-    setDeleteTarget(null);
-  };
-
-  return (
-    <div className="page dashboard">
-      <header className="page-header">
-        <h1>📚 我的词书</h1>
-        <p className="sub">点击词书开始背诵 · 左滑删除</p>
-      </header>
-
-      {books.length === 0 ? (
-        <div className="empty">
-          <BookOpen size={48} />
-          <p>还没有词书，点击下方 "+" 导入</p>
-          <Link to="/import" className="btn btn-primary">
-            <PlusCircle size={18} />
-            导入词书
-          </Link>
-        </div>
-      ) : (
-        <div className="book-list">
-          {books.map((book) => {
-            const prog = progressMap[book.id];
-            const pct = prog && prog.total > 0 ? Math.round((prog.learned / prog.total) * 100) : 0;
-
-            return (
-              <div key={book.id} className="book-card-wrapper">
-                <Link to={`/review/${book.id}`} className="book-card">
-                  <div className="book-card-body">
-                    <h2>{book.name}</h2>
-                    <p className="book-meta">
-                      {book.wordCount} 词 · {book.defaultLevel}
-                    </p>
-                    {prog && (
-                      <div className="progress-bar">
-                        <div className="progress-fill" style={{ width: `${pct}%` }} />
-                      </div>
-                    )}
-                    <p className="progress-text">
-                      {prog ? `${prog.learned} / ${prog.total} 已学 (${pct}%)` : "0 / 0"}
-                    </p>
-                  </div>
-                </Link>
-                <button
-                  className="delete-btn"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setDeleteTarget(deleteTarget?.id === book.id ? null : book);
-                  }}
-                >
-                  <Trash2 size={16} />
-                </button>
-                {deleteTarget?.id === book.id && (
-                  <div className="delete-confirm">
-                    <span>确认删除「{book.name}」？</span>
-                    <button className="btn btn-danger" onClick={() => handleDelete(book)}>
-                      确认
-                    </button>
-                    <button className="btn btn-ghost" onClick={() => setDeleteTarget(null)}>
-                      取消
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
+import {useEffect,useState} from "react";
+import {Link} from "react-router-dom";
+import {ArrowRight,BookOpen,Download,FilePlus2,ShieldCheck,Trash2,Upload} from "lucide-react";
+import {deleteWordbook,exportBackup,getProgress,getWordbookItems,listWordbooks,restoreBackup} from "../lib/store";
+import {isDue} from "../lib/fsrs";
+import type {WordbookMeta} from "../types";
+export default function Dashboard(){
+ const [books,setBooks]=useState<WordbookMeta[]>([]),[deleting,setDeleting]=useState<string|null>(null),[message,setMessage]=useState("");
+ const refresh=()=>setBooks(listWordbooks().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));
+ useEffect(refresh,[]);
+ const counts=(id:string)=>{const p=getProgress(id),items=getWordbookItems(id);return {total:items.length,studied:items.filter(i=>p[i.id]?.seenCount).length,due:items.filter(i=>isDue(p[i.id])).length,newWords:items.filter(i=>!p[i.id]?.fsrs).length}};
+ const summary=books.map(b=>counts(b.id)).reduce((p,c)=>({total:p.total+c.total,studied:p.studied+c.studied,due:p.due+c.due,newWords:p.newWords+c.newWords}),{total:0,studied:0,due:0,newWords:0});
+ const backup=()=>{const url=URL.createObjectURL(new Blob([exportBackup()],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download="记忆工坊备份-"+new Date().toISOString().slice(0,10)+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+ const restore=async(f?:File)=>{if(!f)return;try{const n=restoreBackup(await f.text());refresh();setMessage("恢复成功："+n+" 本词书")}catch(e){setMessage(e instanceof Error?e.message:"恢复失败")}};
+ return <div className="page dashboard"><div className="eyebrow">A. STUDY LAB <span><ShieldCheck size={14}/> 数据仅存本机浏览器</span></div><header className="hero"><span className="kicker">EXAM PREP / 专注学习</span><h1>把知识，<br/><em>记得更牢。</em></h1><p>导入自己的表格，用科学的间隔复习为考试做准备。</p><Link to="/import" className="btn btn-primary hero-action"><FilePlus2 size={17}/> 导入新词书 <ArrowRight size={16}/></Link><span className="hero-accent">a.</span></header><div className="metrics"><div><span>待复习</span><strong>{summary.due}</strong><small>已到期</small></div><div><span>新词</span><strong>{summary.newWords}</strong><small>还未开始</small></div><div><span>已学习</span><strong>{summary.studied}</strong><small>共 {summary.total} 张</small></div></div><div className="section-heading"><div><span className="kicker">YOUR COLLECTION</span><h2>我的词书 <sup>{books.length}</sup></h2></div><Link to="/import" className="text-action">新增 <ArrowRight size={15}/></Link></div>{books.length===0?<div className="empty-state"><BookOpen size={34}/><h3>从自己的学习资料开始</h3><p>导入 CSV 或 Excel，逐列确认字段映射，马上背诵。</p><Link to="/import" className="btn btn-primary">选择表格 <ArrowRight size={16}/></Link></div>:<div className="deck-list">{books.map((b,i)=>{const c=counts(b.id);const percent=c.total?Math.round(c.studied/c.total*100):0;return <div className="deck-card" key={b.id}><Link className="deck-main" to={"/review/"+b.id}><div className="deck-head"><span>{String(i+1).padStart(2,"0")} / DECK</span><span>{c.total} 张</span></div><h3>{b.name}</h3><p className="deck-meta">{c.due} 待复习 · {c.newWords} 新词 · {Math.round((b.targetRetention??.9)*100)}% 目标记忆率</p><div className="deck-progress"><span style={{width:percent+"%"}}/></div><div className="deck-foot"><small>已学习 {percent}%</small><span>进入学习 <ArrowRight size={16}/></span></div></Link><button className="deck-delete" aria-label="删除词书" onClick={()=>setDeleting(deleting===b.id?null:b.id)}><Trash2 size={16}/></button>{deleting===b.id&&<div className="delete-inline"><p>删除「{b.name}」及其记录？</p><button onClick={()=>{deleteWordbook(b.id);setDeleting(null);refresh()}}>确认</button><button onClick={()=>setDeleting(null)}>取消</button></div>}</div>})}</div>}<div className="backup-bar"><h3>本地数据 · 备份与恢复</h3><p>本机浏览器数据并不自动同步。更换设备或清理浏览器数据前请导出备份。</p><div className="backup-actions"><button onClick={backup}><Download size={16}/> 导出备份</button><label><Upload size={16}/> 恢复备份<input hidden type="file" accept=".json" onChange={e=>{void restore(e.target.files?.[0]);e.currentTarget.value=""}}/></label></div>{message&&<p role="status">{message}</p>}</div></div>
 }

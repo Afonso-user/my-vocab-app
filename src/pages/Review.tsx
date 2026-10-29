@@ -174,7 +174,8 @@ export default function Review() {
     const handleKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (event.ctrlKey || event.metaKey || event.altKey || event.repeat
-        || target?.closest("button, a, input, textarea, select, [contenteditable=true]")) return;
+        || target?.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (target?.closest("button, a") && (event.key === " " || event.key === "Enter")) return;
       if (event.key.toLowerCase() === "z" || event.key === "Backspace") {
         event.preventDefault(); undoLast(); return;
       }

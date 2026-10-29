@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Check, RotateCcw, Settings2, Undo2, X } from "lucide-react";
+import { ArrowLeft, Check, Settings2, Undo2, X } from "lucide-react";
 import type { Grade, StudyMode, StudyProgress, StudyQueueItem, VocabularyItem } from "../types";
 import { getProgress, getWordbook, getWordbookItems, saveProgress, updateWordbook } from "../lib/store";
 import { isDue, schedule } from "../lib/fsrs";

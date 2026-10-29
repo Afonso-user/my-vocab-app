@@ -1,0 +1,42 @@
+name: Browser smoke (320 / 390 / desktop)
+on:
+  push:
+    branches: [feat/exam-flashcards-fsrs-20261029]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  ui-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked application dependencies
+        run: npm ci
+      - name: Install browser runner
+        run: |
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
+      - name: Build preview
+        run: npm run build
+      - name: Start preview
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/vite-preview.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:4173/" >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/vite-preview.log
+          exit 1
+      - name: Exercise responsive UI
+        run: node scripts/browser_smoke.mjs
+      - name: Publish browser screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: study-edition-mobile-screenshots
+          path: artifacts/ui/
+          if-no-files-found: ignore

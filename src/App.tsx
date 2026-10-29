@@ -4,6 +4,11 @@ import Dashboard from "./pages/Dashboard";
 import Import from "./pages/Import";
 import Review from "./pages/Review";
 
+function ReviewRoute() {
+  const { wordbookId } = useParams();
+  return <Review key={wordbookId} />;
+}
+
 export default function App() {
   return (
     <HashRouter>

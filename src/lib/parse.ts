@@ -1,5 +1,3 @@
-import * as XLSX from "xlsx";
-
 export type ParsedFile = {
   headers: string[];
   rows: Record<string, string>[];
@@ -83,6 +81,8 @@ export async function parseFile(file: File, sheetName?: string): Promise<ParsedF
     return toParsed(parseDelimitedText(decodeText(await file.arrayBuffer())), file.name);
   }
   if (ext !== "xlsx" && ext !== "xls") throw new Error("请选择 .csv / .tsv / .xlsx / .xls 文件");
+  // Excel parsing is an optional chunk; CSV and the home page never load it.
+  const XLSX = await import("xlsx");
   const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false, raw: true });
   const sheets = wb.SheetNames;
   const chosen = sheetName && sheets.includes(sheetName) ? sheetName : sheets.find(name => {

@@ -1,9 +1,10 @@
 name: Browser smoke (320 / 390 / desktop)
 on:
-  push:
-    branches: [feat/exam-flashcards-fsrs-20261029]
   pull_request:
     branches: [main]
+concurrency:
+  group: review-browser-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:

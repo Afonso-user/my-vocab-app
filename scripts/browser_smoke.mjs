@@ -2,83 +2,80 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { chromium } from "playwright";
 
-const ROOT = "http://127.0.0.1:4173";
-const OUT = "artifacts/ui";
-await mkdir(OUT, { recursive: true });
+const BASE = "http://127.0.0.1:4173";
+await mkdir("artifacts/ui", { recursive: true });
 const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, serviceWorkers: "block" });
+const context = await browser.newContext({
+  viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, serviceWorkers: "block",
+});
 const page = await context.newPage();
-page.on("framenavigated", frame => console.log("NAVIGATED", frame.url()));
-page.on("pageerror", error => console.error("PAGE ERROR:", error.stack || error.message));
-page.on("console", msg => {if(msg.type()!=="debug")console.log("BROWSER CONSOLE:", msg.type(),msg.text())});
-async function shot(name) {
-  const horizontalOverflow = await page.evaluate(() =>
-    Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) >
-      document.documentElement.clientWidth + 2,
-  );
-  assert.equal(horizontalOverflow, false, "Page has horizontal overflow: " + name);
-  await page.screenshot({ path: OUT + "/" + name + ".png", fullPage: true });
+page.on("pageerror", e => console.error("PAGE ERROR",e.message));
+async function screenshot(label) {
+  const checks = await page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll(".rapid-grade"));
+    const usable = buttons.every(node => {
+      const r = node.getBoundingClientRect();
+      return r.bottom <= window.innerHeight + 1 && r.top >= -1 && r.height >= 40;
+    });
+    return { h: document.documentElement.scrollHeight, viewport: innerHeight,
+      overflow: getComputedStyle(document.documentElement).overflowY,
+      count: buttons.length, usable };
+  });
+  assert.equal(checks.overflow, "hidden");
+  assert.ok(checks.h <= checks.viewport + 2,
+    "Vertical scrolling detected at " + label + " " + JSON.stringify(checks));
+  assert.equal(checks.count, 4);
+  assert.equal(checks.usable, true);
+  await page.screenshot({ path: "artifacts/ui/" + label + ".png", fullPage: false });
 }
+const storage = async () => page.evaluate(() => {
+  const key = Object.keys(localStorage).find(k => k.startsWith("vocab-fsrs:"));
+  return key ? JSON.parse(localStorage.getItem(key) || "{}") : {};
+});
 try {
-  await page.goto(ROOT + "/#/", { waitUntil: "networkidle" });
+  await page.goto(BASE + "/#/", { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: /我的词书/ }).waitFor();
-  await shot("390-home");
-
   await page.getByRole("link", { name: /导入新词书/ }).click();
-  await page.locator('input[type="file"]').evaluate(element => {
-    for(const name of ["input","change","click"])element.addEventListener(name, () =>
-      console.log("FILE DOM EVENT", name, "files",element.files?.length,"value",element.value),true);
-  });
   await page.locator('input[type="file"]').setInputFiles({
-    name: "exam_sample.csv",
-    mimeType: "text/csv",
-    buffer: Buffer.from("word,meaning,example,exampleZh,notes\ncasa,房子,Esta casa é grande.,这所房子很大。,名词\nolá,你好,Olá amigo!,你好朋友!,问候语"),
+    name: "rapid_exam.csv", mimeType: "text/csv",
+    buffer: Buffer.from("word,meaning,example,notes\ncasa,房子,Esta casa é grande.,易错点\nolá,你好,Olá amigo!,问候语\nlivro,书,Este livro é novo.,名词"),
   });
-  // The input unmounts as soon as a successful import advances to the mapping step.
-  try { await page.getByRole("heading", { name: "选择词卡字段" }).waitFor({timeout:5000}); }
-  catch (error) {
-    console.error("IMPORT URL:", page.url());
-    console.error("IMPORT BODY:", (await page.locator("body").innerText()).slice(0,2000));
-    await page.screenshot({ path: OUT + "/390-import-debug.png", fullPage: true });
-    throw error;
-  }
-  await shot("390-import-map");
+  await page.getByRole("heading", { name: "选择词卡字段" }).waitFor();
   await page.getByRole("button", { name: /高级设置/ }).click();
   await page.getByRole("heading", { name: "设置你的学习节奏" }).waitFor();
   await page.getByRole("button", { name: /创建词书/ }).click();
   await page.getByRole("heading", { name: /准备好了/ }).waitFor();
   await page.getByRole("link", { name: /立即开始背诵/ }).click();
-  await page.getByRole("button", { name: /开始今日学习/ }).click();
   await page.getByRole("heading", { name: "casa" }).waitFor();
-  await shot("390-card-front");
-  await page.getByRole("button", { name: /查看答案/ }).click();
   await page.getByRole("heading", { name: "房子" }).waitFor();
-  await shot("390-card-back");
+  assert.equal(await page.getByRole("button", { name: /查看答案|朗读|下一张/ }).count(), 0);
+  await screenshot("390-rapid-one-screen");
   await page.getByRole("button", { name: /记得/ }).click();
-  await page.getByRole("button", { name: /撤销/ }).click();
-  assert.equal(await page.getByRole("button", { name: /困难/ }).count(), 1);
-  await page.getByRole("button", { name: /困难/ }).click();
-  await page.getByRole("button", { name: /下一张/ }).click();
-  const state = await page.evaluate(() => {
-    const key = Object.keys(localStorage).find(k => k.startsWith("vocab-fsrs:"));
-    return key ? JSON.parse(localStorage.getItem(key) || "{}") : {};
-  });
-  assert.equal(Object.values(state).length, 1, "Rated card must be stored immediately");
-  assert.equal(Object.values(state)[0].hardCount, 1);
-  assert.equal(Object.values(state)[0].goodCount, 0, "Undo must remove the earlier grade");
-  await page.reload();
-  await page.getByRole("heading", { name: "exam_sample" }).waitFor();
-  assert.equal(await page.getByText(/已学过 1 张/).count(), 1);
-
+  await page.getByRole("heading", { name: "olá" }).waitFor();
+  let records = Object.values(await storage());
+  assert.equal(records.length, 1);
+  assert.equal(records[0].goodCount, 1);
+  await page.getByRole("button", { name: "撤销上次评分" }).click();
+  await page.getByRole("heading", { name: "casa" }).waitFor();
+  assert.equal(Object.values(await storage()).length, 0);
+  await page.keyboard.press("2");
+  await page.getByRole("heading", { name: "olá" }).waitFor();
+  records = Object.values(await storage());
+  assert.equal(records[0].hardCount, 1);
+  assert.equal(records[0].goodCount, 0);
   await page.setViewportSize({ width: 320, height: 700 });
-  await shot("320-study-select");
-  await page.getByRole("button", { name: /开始今日学习/ }).click();
-  await shot("320-card-front");
-
+  await screenshot("320-rapid-one-screen");
+  await page.setViewportSize({ width: 320, height: 568 });
+  await screenshot("320-rapid-short");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await screenshot("390-rapid-back");
+  await page.getByRole("button", { name: "突击" }).click();
+  await page.getByRole("heading", { name: /casa|olá|livro/ }).waitFor();
+  await screenshot("390-rapid-cram");
+  await page.getByRole("button", { name: /重来/ }).click();
+  records = Object.values(await storage());
+  assert.ok(records.some(r => r.cramLastGrade === "again"));
   await page.setViewportSize({ width: 1280, height: 850 });
-  await page.goto(ROOT + "/#/");
-  await shot("1280-home");
-  console.log("Browser smoke PASS: import, mobile widths, FSRS save, undo and reload");
-} finally {
-  await browser.close();
-}
+  await screenshot("1280-rapid-desktop");
+  console.log("PASS: no flip, one-tap grading, undo, cram, all controls in 320/390/1280 viewport");
+} finally { await browser.close(); }

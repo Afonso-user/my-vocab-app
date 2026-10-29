@@ -1,22 +1,34 @@
-// 从 Ponte lib/types.ts 精简移植
-export type ReviewRating = "known" | "fuzzy" | "unknown";
+/** A self-contained, browser-only exam flashcard deck. */
+export type Grade = "again" | "hard" | "good" | "easy";
 
 export type VocabularyItem = {
   id: string;
-  word: string;           // 葡语
-  meaning: string;        // 中文释义
-  partOfSpeech?: string;  // 词性
-  example?: string;       // 例句（葡语）
-  exampleZh?: string;     // 例句翻译
+  wordbookId: string;
+  word: string;
+  meaning: string;
+  pronunciation?: string;
+  partOfSpeech?: string;
+  gender?: "masculine" | "feminine" | "common";
+  plural?: string;
+  example?: string;
+  exampleZh?: string;
   collocations?: string[];
   synonyms?: string[];
-  notes?: string;         // 用户备注
-  gender?: "masculine" | "feminine" | "common";
-  capleLevel?: string;    // CEFR 等级
-  // SRS 字段
-  dueAt: string;
-  familiarity: number;
-  wordbookId: string;
+  antonyms?: string[];
+  variants?: string[];
+  tags?: string[];
+  notes?: string;
+  mnemonic?: string;
+  conjugation?: string;
+  grammar?: string;
+  translationEn?: string;
+  source?: string;
+  unit?: string;
+  capleLevel?: string;
+  extra?: Record<string, string>;
+  // Kept for compatibility with earlier imported decks, not used by FSRS.
+  dueAt?: string;
+  familiarity?: number;
 };
 
 export type WordbookMeta = {
@@ -25,23 +37,38 @@ export type WordbookMeta = {
   createdAt: string;
   wordCount: number;
   defaultLevel: string;
+  dailyNewLimit?: number;
+  targetRetention?: number;
+  examDate?: string;
+  sourceFile?: string;
 };
 
-export type WordStudyRecord = {
-  lemma: string;
-  wordbookId: string;
-  grapeCount: number;
-  reviewPriority: number;
+export type StoredFsrsCard = {
+  cardId: string | number;
+  dueAt: string;
+  lastReviewAt: string | null;
+  [key: string]: unknown;
+};
+
+export type ReviewLog = {
+  at: string;
+  grade: Grade;
+  scheduledFor: string;
+};
+
+export type StudyProgress = {
+  itemId: string;
   seenCount: number;
-  knownCount: number;
-  fuzzyCount: number;
-  unknownCount: number;
-  lastRating: ReviewRating | null;
-  firstLearnedAt: string | null;
+  againCount: number;
+  hardCount: number;
+  goodCount: number;
+  easyCount: number;
+  lastGrade: Grade | null;
   lastSeenAt: string | null;
+  legacySeen?: boolean;
+  fsrs?: StoredFsrsCard;
+  history?: ReviewLog[];
 };
 
-export type StudyQueueItem = {
-  item: VocabularyItem;
-  queueType: "new" | "review";
-};
+export type StudyMode = "today" | "new" | "cram";
+export type StudyQueueItem = { item: VocabularyItem; kind: "new" | "due" | "cram" };

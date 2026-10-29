@@ -1,240 +1,312 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, Keyboard, RotateCcw, Undo2, Volume2 } from "lucide-react";
+import { ArrowLeft, Check, RotateCcw, Settings2, Undo2, X } from "lucide-react";
 import type { Grade, StudyMode, StudyProgress, StudyQueueItem, VocabularyItem } from "../types";
 import { getProgress, getWordbook, getWordbookItems, saveProgress, updateWordbook } from "../lib/store";
 import { isDue, schedule } from "../lib/fsrs";
 import { buildExamDrill } from "../lib/queue";
 
-const GRADES: { grade: Grade; label: string; hint: string }[] = [
-  { grade: "again", label: "重来", hint: "忘记了" },
-  { grade: "hard", label: "困难", hint: "勉强想起" },
-  { grade: "good", label: "记得", hint: "正常回忆" },
-  { grade: "easy", label: "简单", hint: "非常熟悉" },
+type UndoEntry = {
+  itemId: string;
+  previous?: StudyProgress;
+  queue: StudyQueueItem[];
+  position: number;
+  count: number;
+};
+const RATING: { id: Grade; title: string; meaning: string; key: string }[] = [
+  { id: "again", title: "重来", meaning: "忘了", key: "1" },
+  { id: "hard", title: "困难", meaning: "想起但吃力", key: "2" },
+  { id: "good", title: "记得", meaning: "正常想起", key: "3" },
+  { id: "easy", title: "简单", meaning: "一眼就会", key: "4" },
 ];
-type UndoEntry = { itemId: string; before?: StudyProgress; previousQueue: StudyQueueItem[] };
+const MODES: { value: StudyMode; label: string }[] = [
+  { value: "today", label: "今日" },
+  { value: "new", label: "新词" },
+  { value: "cram", label: "突击" },
+];
 
-function daysUntil(date: string) {
-  if (!date) return null;
-  const timestamp = new Date(date + "T23:59:59").getTime();
-  return Number.isFinite(timestamp) ? Math.max(0, Math.ceil((timestamp - Date.now()) / 86400000)) : null;
+function makeQueue(mode: StudyMode, items: VocabularyItem[],
+  records: Record<string, StudyProgress>, newLimit: number): StudyQueueItem[] {
+  if (mode === "cram") return buildExamDrill(items, records, 120);
+  const due: VocabularyItem[] = [];
+  const fresh: VocabularyItem[] = [];
+  const now = Date.now();
+  for (const item of items) {
+    const record = records[item.id];
+    if (!record?.fsrs) fresh.push(item);
+    else if (isDue(record, now)) due.push(item);
+  }
+  due.sort((a, b) =>
+    Date.parse(records[a.id].fsrs!.dueAt) - Date.parse(records[b.id].fsrs!.dueAt));
+  const limit = Math.max(1, Math.min(200, newLimit));
+  if (mode === "new") return fresh.slice(0, limit).map(item => ({ item, kind: "new" }));
+  return [
+    ...due.slice(0, 60).map(item => ({ item, kind: "due" as const })),
+    ...fresh.slice(0, limit).map(item => ({ item, kind: "new" as const })),
+  ];
 }
-function dueLabel(iso?: string) {
-  if (!iso) return "等待安排";
-  const timestamp = new Date(iso).getTime();
-  if (!Number.isFinite(timestamp)) return "等待安排";
-  const minutes = Math.round((timestamp - Date.now()) / 60000);
-  if (minutes >= 0 && minutes < 60) return "约 " + Math.max(1, minutes) + " 分钟后";
-  if (minutes >= 60 && minutes < 1440) return "约 " + Math.ceil(minutes / 60) + " 小时后";
-  return new Date(iso).toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+
+function emptyRecord(item: VocabularyItem): StudyProgress {
+  return {
+    itemId: item.id, seenCount: 0, againCount: 0, hardCount: 0,
+    goodCount: 0, easyCount: 0, lastGrade: null, lastSeenAt: null,
+  };
 }
-function Details({ title, value }: { title: string; value?: string | string[] }) {
-  const text = Array.isArray(value) ? value.join(" · ") : value;
-  return text ? <div className="detail-line"><b>{title}</b><span>{text}</span></div> : null;
+function drillRating(old: StudyProgress | undefined, item: VocabularyItem, grade: Grade): StudyProgress {
+  const progress = old ?? emptyRecord(item);
+  return {
+    ...progress,
+    cramLastGrade: grade,
+    cramAgainCount: (progress.cramAgainCount ?? 0) + (grade === "again" ? 1 : 0),
+    cramLastAt: new Date().toISOString(),
+    // Intentionally preserve FSRS reviewCount, dates, difficulty and stability.
+  };
 }
-function storageError(error: unknown) {
-  return error instanceof DOMException && error.name === "QuotaExceededError"
-    ? "本地空间不足，请返回首页导出备份"
-    : error instanceof Error ? error.message : "保存失败";
+function stringify(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value.join(" · ") : value || "";
+}
+function saveError(error: unknown): string {
+  return error instanceof Error ? error.message : "保存失败，请检查浏览器本地存储";
+}
+function deadline(date?: string): string {
+  if (!date) return "";
+  const at = new Date(date + "T23:59:59").getTime();
+  const days = Math.ceil((at - Date.now()) / 86400000);
+  return Number.isFinite(days) ? days > 0 ? "考前 " + days + " 天" : "考试日" : "";
 }
 
 export default function Review() {
   const { wordbookId = "" } = useParams();
   const book = getWordbook(wordbookId);
   const items = useMemo(() => getWordbookItems(wordbookId), [wordbookId]);
-  const [progress, setProgress] = useState<Record<string, StudyProgress>>(() => getProgress(wordbookId));
-  const [mode, setMode] = useState<StudyMode | "select">("select");
-  const [queue, setQueue] = useState<StudyQueueItem[]>([]);
-  const [position, setPosition] = useState(0);
-  const [revealed, setRevealed] = useState(false);
-  const [rated, setRated] = useState(false);
-  const [completedCount, setCompletedCount] = useState(0);
-  const [undo, setUndo] = useState<UndoEntry | null>(null);
-  const [newLimit, setNewLimit] = useState(book?.dailyNewLimit ?? 20);
+  const [progress, setProgress] = useState<Record<string, StudyProgress>>(
+    () => getProgress(wordbookId),
+  );
+  const [limit, setLimit] = useState(book?.dailyNewLimit ?? 20);
   const [retention, setRetention] = useState(book?.targetRetention ?? 0.9);
   const [exam, setExam] = useState(book?.examDate ?? "");
-  const [speechLanguage, setSpeechLanguage] = useState<"pt-BR" | "pt-PT" | "en-US">("pt-BR");
+  const [mode, setMode] = useState<StudyMode>("today");
+  const [queue, setQueue] = useState<StudyQueueItem[]>(() =>
+    makeQueue("today", items, getProgress(wordbookId), book?.dailyNewLimit ?? 20),
+  );
+  const [index, setIndex] = useState(0);
+  const [completed, setCompleted] = useState(0);
+  const [undo, setUndo] = useState<UndoEntry | null>(null);
   const [message, setMessage] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const busy = useRef(false);
+  const current = queue[index];
+  const word = current?.item;
+  const remaining = Math.max(0, queue.length - index);
+  const isFinished = !current;
 
-  const { fresh, due, learned, legacy } = useMemo(() => {
-    const fresh: VocabularyItem[] = [], due: VocabularyItem[] = [];
-    let learned = 0, legacy = 0;
-    const now = Date.now();
-    for (const item of items) {
-      const p = progress[item.id];
-      if (!p?.fsrs) { fresh.push(item); if (p?.legacySeen) legacy++; }
-      if (isDue(p, now)) due.push(item);
-      if (p?.seenCount) learned++;
-    }
-    due.sort((a, b) => Date.parse(progress[a.id].fsrs!.dueAt) - Date.parse(progress[b.id].fsrs!.dueAt));
-    return { fresh, due, learned, legacy };
-  }, [items, progress]);
-  const days = daysUntil(exam);
-  const perDay = days && days > 0 ? Math.ceil(fresh.length / days) : null;
-  const current = queue[position];
-  const item: VocabularyItem | undefined = current?.item;
-  const finished = mode !== "select" && !current;
+  useEffect(() => {
+    document.documentElement.classList.add("rapid-studying");
+    return () => document.documentElement.classList.remove("rapid-studying");
+  }, []);
+  useEffect(() => { busy.current = false; }, [index]);
 
-  function start(type: StudyMode) {
-    let next: StudyQueueItem[] = [];
-    if (type === "today") next = [
-      ...due.slice(0, 60).map(item => ({ item, kind: "due" as const })),
-      ...fresh.slice(0, newLimit).map(item => ({ item, kind: "new" as const })),
-    ];
-    if (type === "new") next = fresh.slice(0, newLimit).map(item => ({ item, kind: "new" }));
-    if (type === "cram") next = buildExamDrill(items, progress, 100);
-    if (!next.length) return;
-    setMode(type); setQueue(next); setPosition(0); setRevealed(false);
-    setRated(false); setUndo(null); setCompletedCount(0); setMessage("");
+  function selectMode(next: StudyMode) {
+    setMode(next);
+    setQueue(makeQueue(next, items, progress, limit));
+    setIndex(0);
+    setCompleted(0);
+    setUndo(null);
+    setShowSettings(false);
+    setMessage("");
+    busy.current = false;
   }
   function rate(grade: Grade) {
-    if (!item || rated || mode === "cram" || current.kind === "reinforce") return;
-    const before = progress[item.id];
+    if (busy.current || !current || !word || showSettings) return;
+    busy.current = true;
     try {
-      const nextCard = schedule(before, item, grade, retention);
-      const updated = { ...progress, [item.id]: nextCard };
-      saveProgress(wordbookId, updated);
-      setUndo({ itemId: item.id, before, previousQueue: queue });
-      setProgress(updated); setRated(true); setCompletedCount(n => n + 1);
-      // A single optional same-session reinforcement does not add a second FSRS grade.
-      if (grade === "again" && !queue.some(q => q.item.id === item.id && q.kind === "reinforce"))
-        setQueue(previous => {
-          const copy = [...previous];
-          copy.splice(Math.min(position + 4, copy.length), 0, { item, kind: "reinforce" });
-          return copy;
-        });
+      const before = progress[word.id];
+      const next = mode === "cram" || current.kind === "reinforce"
+        ? drillRating(before, word, grade)
+        : schedule(before, word, grade, retention);
+      const saved = { ...progress, [word.id]: next };
+      // Synchronous local write before moving to the next card.
+      saveProgress(wordbookId, saved);
+      setUndo({ itemId: word.id, previous: before, queue, position: index, count: completed });
+      setProgress(saved);
+      if (grade === "again" && mode !== "cram" && current.kind !== "reinforce"
+        && !queue.some(entry => entry.item.id === word.id && entry.kind === "reinforce")) {
+        const replacement = [...queue];
+        replacement.splice(Math.min(index + 4, replacement.length), 0, { item: word, kind: "reinforce" });
+        setQueue(replacement);
+      }
+      setIndex(value => value + 1);
+      setCompleted(value => value + 1);
       setMessage("");
-    } catch (error) { setMessage(storageError(error)); }
+    } catch (error) {
+      busy.current = false;
+      setMessage(saveError(error));
+    }
   }
-  function undoRating() {
-    if (!undo || !rated) return;
-    const updated = { ...progress };
-    if (undo.before) updated[undo.itemId] = undo.before;
-    else delete updated[undo.itemId];
+  function undoLast() {
+    if (!undo || busy.current) return;
     try {
-      saveProgress(wordbookId, updated);
-      setProgress(updated); setQueue(undo.previousQueue);
-      setCompletedCount(n => Math.max(0, n - 1)); setRated(false); setUndo(null); setMessage("");
-    } catch (error) { setMessage(storageError(error)); }
+      const restored = { ...progress };
+      if (undo.previous) restored[undo.itemId] = undo.previous;
+      else delete restored[undo.itemId];
+      saveProgress(wordbookId, restored);
+      setProgress(restored);
+      setQueue(undo.queue);
+      setIndex(undo.position);
+      setCompleted(undo.count);
+      setUndo(null);
+      setMessage("");
+      busy.current = false;
+    } catch (error) { setMessage(saveError(error)); }
   }
-  function next() {
-    if (mode === "cram") setCompletedCount(n => n + 1);
-    setPosition(n => n + 1); setRated(false); setRevealed(false); setUndo(null);
-  }
-  function speak(text: string) {
-    if (!("speechSynthesis" in window)) { setMessage("当前浏览器不支持语音合成"); return; }
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = speechLanguage; utterance.rate = 0.9;
-    speechSynthesis.cancel(); speechSynthesis.speak(utterance);
+  function saveSettings() {
+    if (!book) return;
+    try {
+      updateWordbook({
+        ...book, dailyNewLimit: limit, targetRetention: retention,
+        examDate: exam || undefined,
+      });
+      setShowSettings(false);
+      setMessage("设置已保存，可选择模式刷新本轮词卡");
+    } catch (error) { setMessage(saveError(error)); }
   }
   useEffect(() => {
-    function keyboard(event: KeyboardEvent) {
-      if (event.ctrlKey || event.altKey || event.metaKey || event.repeat
-        || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement
-        || event.target instanceof HTMLSelectElement || mode === "select" || !current) return;
-      if (!revealed && [" ", "Enter"].includes(event.key)) {
-        event.preventDefault(); setRevealed(true);
-      } else if (revealed && !rated && mode !== "cram" && current.kind !== "reinforce" && /^[1-4]$/.test(event.key)) {
-        event.preventDefault(); rate(GRADES[Number(event.key) - 1].grade);
-      } else if (revealed && (rated || mode === "cram" || current.kind === "reinforce") && ["Enter", "ArrowRight"].includes(event.key)) {
-        event.preventDefault(); next();
+    const handleKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.repeat
+        || target?.closest("button, a, input, textarea, select, [contenteditable=true]")) return;
+      if (event.key.toLowerCase() === "z" || event.key === "Backspace") {
+        event.preventDefault(); undoLast(); return;
       }
-    }
-    window.addEventListener("keydown", keyboard);
-    return () => window.removeEventListener("keydown", keyboard);
+      if (showSettings || !current) return;
+      const num = /^[1-4]$/.test(event.key) ? Number(event.key) - 1 : event.key === " " ? 2 : -1;
+      if (num >= 0) { event.preventDefault(); rate(RATING[num].id); }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
   });
 
-  if (!book) return <div className="page review-page"><Link to="/" className="back-link">返回词书</Link><p>未找到此词书</p></div>;
-  return <div className={"page review-page " + (mode === "select" ? "" : "session-page")}>
-    <div className="back-row">
-      {mode === "select" ? <Link to="/" className="back-link"><ArrowLeft size={17}/> 我的词书</Link>
-        : <button className="back-link back-button" onClick={() => setMode("select")}><ArrowLeft size={17}/> 退出本轮</button>}
-      <span className="review-algorithm"><Clock3 size={14}/> FSRS 记忆曲线</span>
+  const details = useMemo(() => {
+    if (!word) return [];
+    const fields: [string, string | string[] | undefined][] = [
+      ["例句", word.example],
+      ["例句译文", word.exampleZh],
+      ["搭配", word.collocations],
+      ["同义词", word.synonyms],
+      ["反义词", word.antonyms],
+      ["词形", word.variants],
+      ["语法", word.grammar],
+      ["动词变位", word.conjugation],
+      ["记忆提示", word.mnemonic],
+      ["备注", word.notes],
+      ["英文", word.translationEn],
+      ["复数", word.plural],
+      ["标签", word.tags],
+      ["来源", word.source],
+      ...Object.entries(word.extra ?? {}),
+    ];
+    return fields.map(([label, value]) => ({ label, text: stringify(value) }))
+      .filter(entry => entry.text.length > 0);
+  }, [word]);
+
+  if (!book) return <div className="rapid-missing"><Link to="/">返回词书</Link><p>该词书不存在。</p></div>;
+
+  return <div className="rapid-study" data-mode={mode}>
+    <header className="rapid-header">
+      <Link className="rapid-return" to="/" aria-label="返回我的词书"><ArrowLeft size={18}/></Link>
+      <div className="rapid-book" title={book.name}>{book.name}</div>
+      <nav className="rapid-modes" aria-label="学习模式">
+        {MODES.map(entry => <button key={entry.value}
+          className={mode === entry.value ? "active" : ""}
+          onClick={() => selectMode(entry.value)}
+          aria-pressed={mode === entry.value}>{entry.label}</button>)}
+      </nav>
+      <button className="rapid-small-btn rapid-undo" onClick={undoLast} disabled={!undo} title="撤销上一次评分"
+        aria-label="撤销上次评分"><Undo2 size={17}/></button>
+      <button className="rapid-small-btn" onClick={() => setShowSettings(v => !v)}
+        title="学习设置" aria-label="学习设置"><Settings2 size={17}/></button>
+    </header>
+
+    <div className="rapid-progress">
+      <div className="rapid-progress-copy">
+        <span>{mode === "today" ? "今日任务" : mode === "new" ? "新词速记" : "考前突击"}</span>
+        <span><strong>{Math.min(index + 1, queue.length)}</strong> / {queue.length}
+          {remaining > 0 && <em> · 剩 {remaining} 张</em>}</span>
+      </div>
+      <div className="rapid-progress-track"><span style={{
+        width: (queue.length ? Math.min(100, index / queue.length * 100) : 100) + "%",
+      }}/></div>
     </div>
 
-    {mode === "select" ? <>
-      <header className="review-intro"><span className="kicker">YOUR STUDY DECK</span><h1>{book.name}</h1>
-        <p>{items.length} 张词卡 · 已学过 {learned} 张 · 今日到期 {due.length} 张</p></header>
-      {days !== null && <div className="exam-brief"><CalendarDays size={20}/><div>
-        <strong>{days === 0 ? "考试就在今天" : "距离考试还有 " + days + " 天"}</strong>
-        <p>{!fresh.length ? "所有词卡已完成首次排程，继续按期复习。"
-          : perDay ? "还有 " + fresh.length + " 张待首次排程；建议每天完成约 " + perDay + " 张。" : "先熟悉词卡，随后再集中速刷。"}</p>
-      </div></div>}
-      <div className="review-summary">
-        <div><span>到期复习</span><strong>{due.length}</strong><small>优先处理</small></div>
-        <div><span>待首次排程</span><strong>{fresh.length}</strong><small>{legacy ? "含 " + legacy + " 张旧记录" : "新词与旧记录"}</small></div>
-        <div><span>学习覆盖</span><strong>{items.length ? Math.round(learned / items.length * 100) : 0}%</strong><small>接触过的词卡</small></div>
-      </div>
-      <section className="study-settings"><div className="settings-heading"><h3>本轮学习设置</h3><span>随时可更改</span></div>
-        <label>每轮新词 <input type="number" min={1} max={200} value={newLimit}
-          onChange={e => setNewLimit(Math.min(200, Math.max(1, Number(e.target.value) || 1)))}/></label>
-        <label>目标记忆率 <select value={retention} onChange={e => setRetention(Number(e.target.value))}>
-          <option value={0.85}>85% · 轻量</option><option value={0.9}>90% · 均衡</option>
-          <option value={0.95}>95% · 密集</option></select></label>
-        <label>考试日期 <input type="date" value={exam} onChange={e => setExam(e.target.value)}/></label>
-        <label>朗读语言 <select value={speechLanguage} onChange={e => setSpeechLanguage(e.target.value as typeof speechLanguage)}>
-          <option value="pt-BR">葡语 · 巴西</option><option value="pt-PT">葡语 · 葡萄牙</option><option value="en-US">英语</option>
-        </select></label>
-        <button className="save-settings" onClick={() => {
-          try { updateWordbook({ ...book, dailyNewLimit: newLimit, targetRetention: retention, examDate: exam || undefined }); setMessage("设置已保存"); }
-          catch (error) { setMessage(storageError(error)); }
-        }}>保存为本词书默认设置</button>
-      </section>
-      <div className="mode-cards">
-        <div className="mode-card primary-mode"><span className="kicker">DAILY FOCUS</span><BookOpen size={23}/>
-          <h3>今日学习</h3><p>优先处理 {Math.min(60, due.length)} 张到期词，再加入 {Math.min(newLimit, fresh.length)} 张待排程词卡。</p>
-          <button className="btn btn-primary full" disabled={!due.length && !fresh.length} onClick={() => start("today")}>开始今日学习 <ArrowRight size={17}/></button></div>
-        <div className="mode-card"><CheckCircle2 size={23}/><h3>新词排程</h3><p>为未建立 FSRS 计划的词卡安排首次复习。</p>
-          <button className="btn btn-secondary full" disabled={!fresh.length} onClick={() => start("new")}>学习 {Math.min(newLimit, fresh.length)} 张</button></div>
-        <div className="mode-card"><RotateCcw size={23}/><h3>考前弱项速刷</h3><p>优先抽取到期、记错和稳定性低的词卡；不修改 FSRS 日程。</p>
-          <button className="btn btn-ghost full" disabled={!items.length} onClick={() => start("cram")}>立即速刷</button></div>
-      </div>
-      {legacy > 0 && <p className="legacy-notice">已保留 {legacy} 张词卡的旧版学习次数。首次在新版评分后，才会建立真正的 FSRS 日程。</p>}
-    </> : finished ? <div className="finish-screen"><div className="finish-symbol"><CheckCircle2 size={37}/></div>
-      <span className="kicker">SESSION COMPLETE</span><h1>这一轮，完成了。</h1>
-      <p>本轮回忆了 {completedCount} 次。{mode === "cram" ? "速刷不会改变记忆计划。" : "下一次复习时间已保存在本地。"}</p>
-      <button className="btn btn-primary" onClick={() => setMode("select")}>返回词书 <ArrowRight size={17}/></button></div> :
-      <>
-        <div className="session-head"><span>{mode === "cram" ? "考前速刷" : mode === "new" ? "新词排程" : "今日学习"}</span>
-          <strong>{position + 1} <i>/</i> {queue.length}</strong></div>
-        <div className="session-progress"><span style={{ width: (position / queue.length * 100) + "%" }}/></div>
-        <article className={"flashcard " + (revealed ? "flipped" : "")}>
-          <div className="card-topline"><span>{current.kind === "new" ? "LEARN / 待排程" : current.kind === "due" ? "REVIEW / 到期" : current.kind === "reinforce" ? "REINFORCE / 补记" : "CRAM / 速刷"}</span>
-            <span>{item?.unit ?? item?.capleLevel ?? "FLASHCARD"}</span></div>
-          <div className="word-center"><h1 lang="pt">{item?.word}</h1>
-            {item?.pronunciation && <p className="phonetic">{item.pronunciation}</p>}
-            <button className="speaker" onClick={() => speak(item?.word ?? "")} aria-label="朗读词语"><Volume2 size={19}/></button>
-          </div>
-          {revealed ? <div className="answer-content"><div className="answer-label">ANSWER / 释义</div>
-              <h2>{item?.meaning}</h2>
-              {(item?.partOfSpeech || item?.gender) && <p className="answer-pos">{item.partOfSpeech}
-                {item.gender === "masculine" ? " · 阳性" : item.gender === "feminine" ? " · 阴性" : item.gender === "common" ? " · 通性" : ""}</p>}
-              {item?.example && <div className="example"><p lang="pt">{item.example}</p>{item.exampleZh && <small>{item.exampleZh}</small>}</div>}
-              {item?.mnemonic && <div className="memory-tip"><b>记忆提示</b><p>{item.mnemonic}</p></div>}
-              <details className="answer-more"><summary>查看全部补充资料</summary>
-                <Details title="固定搭配" value={item?.collocations}/><Details title="同义词" value={item?.synonyms}/>
-                <Details title="反义词" value={item?.antonyms}/><Details title="词形变体" value={item?.variants}/>
-                <Details title="语法" value={item?.grammar}/><Details title="动词变位" value={item?.conjugation}/>
-                <Details title="备注" value={item?.notes}/><Details title="英文释义" value={item?.translationEn}/>
-                <Details title="复数" value={item?.plural}/><Details title="标签" value={item?.tags}/>
-                <Details title="来源" value={item?.source}/>
-                {item?.extra && Object.entries(item.extra).map(([key, value]) => <Details key={key} title={key} value={value}/>)}
-              </details>
-            </div> :
-            <div className="think-hint"><div className="hint-line"/><p>先回想含义，再揭晓答案</p><small>尽量不要直接猜</small></div>}
-        </article>
-        <div className="card-controls">
-          {!revealed ? <button className="btn btn-primary full reveal-button" onClick={() => setRevealed(true)}>查看答案 <ArrowRight size={17}/></button>
-          : mode === "cram" || current.kind === "reinforce" ? <button className="btn btn-primary full" onClick={next}>{current.kind === "reinforce" ? "完成加固 · 继续" : "下一张"} <ArrowRight size={17}/></button>
-          : !rated ? <><p className="grade-title">忘记了请选「重来」，只有真正回想起才选「困难」</p>
-              <div className="grade-grid">{GRADES.map((grade, index) => <button key={grade.grade} className={"grade-" + grade.grade} onClick={() => rate(grade.grade)}>
-                <strong>{grade.label}</strong><small>{grade.hint}</small><kbd>{index + 1}</kbd></button>)}</div></>
-          : <><div className="rating-confirmation"><CheckCircle2 size={17}/><span>已保存 · 下次复习 {dueLabel(item && progress[item.id]?.fsrs?.dueAt)}</span>
-              <button onClick={undoRating}><Undo2 size={14}/> 撤销</button></div>
-              <button className="btn btn-primary full" onClick={next}>下一张 <ArrowRight size={17}/></button></>}
+    {isFinished
+      ? <main className="rapid-done">
+        <div className="rapid-done-mark"><Check size={34}/></div>
+        <p className="rapid-eyebrow">SESSION COMPLETE</p>
+        <h1>{completed ? "这一轮，刷完了。" : mode === "today" ? "今日已清空。" : "暂无可学词卡"}</h1>
+        <p>已处理 {completed} 张 · {mode === "cram" ? "正式 FSRS 日程保持不变" : "评分已经保存在本地"}</p>
+        <div className="rapid-done-actions">
+          <button onClick={() => selectMode("cram")}>继续突击</button>
+          <button onClick={() => selectMode("today")}>刷新今日任务</button>
         </div>
-        <p className="keyboard-note"><Keyboard size={14}/> 空格翻面 · 数字 1–4 评价 · Enter 下一张</p>
-      </>}
-    {message && <p role="status" className="inline-message">{message}</p>}
+      </main>
+      : <main className="rapid-card" aria-label="当前词卡">
+        <div className="rapid-card-meta">
+          <span>{current.kind === "due" ? "到期复习" :
+            current.kind === "new" ? "首次学习" :
+            current.kind === "reinforce" ? "薄弱补记" : "弱项突击"}</span>
+          <span>{word?.unit ?? word?.capleLevel ?? deadline(exam) ?? ""}</span>
+        </div>
+        <div className="rapid-word-area">
+          <h1 lang="pt" className={word!.word.length > 40 ? "rapid-long" : ""}>{word?.word}</h1>
+          <div className="rapid-word-meta">
+            {word?.partOfSpeech && <span>{word.partOfSpeech}</span>}
+            {word?.gender && <span>{word.gender === "masculine" ? "阳性" :
+              word.gender === "feminine" ? "阴性" : "通性"}</span>}
+            {word?.pronunciation && <span className="rapid-phonetic">{word.pronunciation}</span>}
+          </div>
+        </div>
+        <div className="rapid-meaning-area">
+          <span className="rapid-label">释义 / ANSWER</span>
+          <h2 className={word!.meaning.length > 80 ? "rapid-long-answer" : ""}>{word?.meaning}</h2>
+        </div>
+        {details.length > 0 && <section className="rapid-facts" aria-label="补充资料">
+          {details.map(entry => <div className="rapid-fact" key={entry.label}>
+            <span>{entry.label}</span><p title={entry.text}>{entry.text}</p>
+          </div>)}
+        </section>}
+        {details.length === 0 && <div className="rapid-space-note">看词与释义，直接判断熟悉程度</div>}
+      </main>}
+
+    {showSettings && <section className="rapid-settings" aria-label="学习设置">
+      <div className="rapid-settings-heading"><b>快速设置</b>
+        <button onClick={() => setShowSettings(false)} aria-label="关闭设置"><X size={17}/></button></div>
+      <label>每轮新词 <input type="number" min="1" max="200" value={limit}
+        onChange={e => setLimit(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}/></label>
+      <label>目标记忆率 <select value={retention} onChange={e => setRetention(Number(e.target.value))}>
+        <option value={0.85}>85%</option><option value={0.9}>90%</option>
+        <option value={0.95}>95%</option></select></label>
+      <label>考试日期 <input type="date" value={exam}
+        onChange={e => setExam(e.target.value)}/></label>
+      <button className="rapid-settings-save" onClick={saveSettings}>保存设置</button>
+    </section>}
+
+    <footer className="rapid-footer">
+      <div className="rapid-footer-hint">
+        <span>{mode === "cram" ? "突击评分只记录薄弱项，不改变 FSRS 到期日" :
+          "看完词义立即选，评分后自动进入下一张"}</span>
+        <span className="rapid-shortcuts">键盘 1–4 · 空格记得 · Z 撤销</span>
+      </div>
+      <div className="rapid-ratings" role="group" aria-label="一键评分并自动下一张">
+        {RATING.map(entry => <button key={entry.id}
+          className={"rapid-grade rapid-" + entry.id}
+          disabled={isFinished || showSettings}
+          onClick={() => rate(entry.id)}>
+          <span className="rapid-grade-title">{entry.title}</span>
+          <span className="rapid-grade-hint">{entry.meaning}</span>
+          <kbd>{entry.key}</kbd>
+        </button>)}
+      </div>
+      {message && <p className="rapid-toast" role="status">{message}</p>}
+    </footer>
   </div>;
 }

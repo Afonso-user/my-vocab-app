@@ -340,7 +340,7 @@ export default function Review() {
             </section> : <div className="v5-no-more">这张词卡暂无补充资料</div>}
           </div>
         </div>
-      </div>
+      </div>}
     </main>}
 
     <footer className="v4-actionbar">

@@ -1,5 +1,6 @@
 /** A self-contained, browser-only exam flashcard deck. */
 export type Grade = "again" | "hard" | "good" | "easy";
+export type StudyOrder = "sequential" | "random";
 
 export type VocabularyItem = {
   id: string;
@@ -41,6 +42,7 @@ export type WordbookMeta = {
   targetRetention?: number;
   examDate?: string;
   sourceFile?: string;
+  studyOrder?: StudyOrder;
 };
 
 export type StoredFsrsCard = {

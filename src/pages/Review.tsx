@@ -43,13 +43,16 @@ function createQueue(
   due.sort((a, b) =>
     Date.parse(records[a.id].fsrs!.dueAt) - Date.parse(records[b.id].fsrs!.dueAt));
   const count = Math.max(1, Math.min(200, limit));
-  const selected: StudyQueueItem[] = mode === "new"
-    ? fresh.slice(0, count).map(item => ({ item, kind: "new" as const }))
-    : [
-      ...due.slice(0, 60).map(item => ({ item, kind: "due" as const })),
-      ...fresh.slice(0, count).map(item => ({ item, kind: "new" as const })),
-    ];
-  return orderQueue(selected, order, items);
+  // Random mode draws from the entire eligible deck, not just the first
+  // N import rows; sequential retains the source CSV row order.
+  const nextNew = orderQueue(
+    fresh.map(item => ({ item, kind: "new" as const })), order, items,
+  ).slice(0, count);
+  if (mode === "new") return nextNew;
+  const nextDue = orderQueue(
+    due.map(item => ({ item, kind: "due" as const })), order, items,
+  ).slice(0, 60);
+  return orderQueue([...nextDue, ...nextNew], order, items);
 }
 
 function display(value: string | string[] | undefined) {
@@ -127,7 +130,10 @@ export default function Review() {
     try {
       updateWordbook({ ...book, studyOrder: next });
       setStudyOrder(next);
-      setQueue(previous => reorderRemaining(previous, index, next, items));
+      const atUntouchedStart = index === 0 && completed === 0 && selectedGrade === null && !undo;
+      setQueue(previous => atUntouchedStart
+        ? createQueue(mode, items, records, limit, next)
+        : reorderRemaining(previous, index, next, items));
       setUndo(previous => previous ? {
         ...previous,
         previousQueue: reorderRemaining(

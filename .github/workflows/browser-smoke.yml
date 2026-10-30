@@ -39,6 +39,7 @@ jobs:
         run: |
           node scripts/browser_smoke.mjs
           node scripts/browser_fast_import.mjs
+          node scripts/browser_order_details.mjs
       - name: Publish browser screenshots
         if: always()
         uses: actions/upload-artifact@v4

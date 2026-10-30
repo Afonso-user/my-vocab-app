@@ -1,6 +1,18 @@
 /* V5 · two visible order modes, complete notes in the same answer surface.
    The learning screen never page-scrolls. For unusually long user-supplied
    content, only the answer contents scroll so nothing is silently truncated. */
+.rapid-v4 {
+  grid-template-rows: 44px 45px minmax(0, 1fr) 106px;
+}
+.rapid-v4 .rapid-progress { gap: 4px; }
+@media (max-width: 650px) {
+  .rapid-v4 { grid-template-rows: 39px 39px minmax(0, 1fr) 103px; }
+  .rapid-v4 .rapid-progress { gap: 3px; }
+}
+@media (max-height: 660px) {
+  .rapid-v4 { grid-template-rows: 34px 33px minmax(0, 1fr) 91px; }
+  .rapid-v4 .rapid-progress { gap: 2px; }
+}
 .rapid-v4 .rapid-progress-copy {
   gap: 6px;
   min-width: 0;

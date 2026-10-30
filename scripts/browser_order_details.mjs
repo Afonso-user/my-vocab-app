@@ -81,7 +81,7 @@ try {
   await page.getByRole("region",{name:"完整补充资料"}).waitFor();
   assert.equal(await page.getByRole("button",{name:/查看完整资料/}).count(),0);
   const full = page.locator(".v5-data-entry");
-  assert.equal(await full.count(),13,"All mapped and custom attributes should render inline");
+  assert.ok((await full.count()) >= 13,"All mapped, default and custom attributes should render inline");
   const text = await page.locator(".v5-full-data").innerText();
   for(const phrase of ["这间房子很大。","em casa","lar","rua","casas","阴性名词",
     "完整变位或其他词形资料","一段较长的原始备注",

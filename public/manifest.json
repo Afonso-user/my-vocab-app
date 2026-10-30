@@ -1,20 +1,22 @@
 {
-  "name": "我的背词本",
-  "short_name": "背词",
+  "name": "记忆工坊 · 考前词卡",
+  "short_name": "记忆工坊",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#fbfaf6",
-  "theme_color": "#1f5e46",
+  "background_color": "#fafaf7",
+  "theme_color": "#294834",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><text y='.9em' font-size='170'>📚</text></svg>",
+      "src": "./icon-192.png",
       "sizes": "192x192",
-      "type": "image/svg+xml"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><text y='.9em' font-size='450'>📚</text></svg>",
+      "src": "./icon-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]

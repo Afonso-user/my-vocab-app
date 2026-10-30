@@ -1,0 +1,17 @@
+name: Dev source snapshot
+on:
+  push:
+    branches: [feat/exam-flashcards-fsrs-20261029]
+    paths: [.github/workflows/dev-source-export.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: tar -czf /tmp/my-vocab-src.tar.gz --exclude=.git .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: my-vocab-source-snapshot
+          path: /tmp/my-vocab-src.tar.gz

@@ -1,0 +1,25 @@
+name: Validate exam flashcards
+on:
+  pull_request:
+    branches: [main]
+concurrency:
+  group: review-validate-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm ci
+      - name: Type check and bundle
+        run: npm run build
+      - name: Lint
+        run: npm run lint
+      - name: Core regressions
+        run: npm test

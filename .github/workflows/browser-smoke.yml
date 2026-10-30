@@ -1,0 +1,56 @@
+name: Browser smoke (320 / 390 / desktop)
+on:
+  pull_request:
+    branches: [main]
+concurrency:
+  group: review-browser-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  ui-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked application dependencies
+        run: npm ci
+      - name: Install browser runner (isolated from app dependency graph)
+        run: |
+          mkdir -p /tmp/rapid-playwright
+          printf '{"private":true,"type":"module"}' > /tmp/rapid-playwright/package.json
+          npm install --prefix /tmp/rapid-playwright --no-save --package-lock=false playwright@1.56.1
+          ln -s /tmp/rapid-playwright/node_modules/playwright node_modules/playwright
+          /tmp/rapid-playwright/node_modules/.bin/playwright install --with-deps chromium
+      - name: Build preview
+        run: npm run build
+      - name: Start preview
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/vite-preview.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:4173/" >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/vite-preview.log
+          exit 1
+      - name: Exercise responsive UI
+        run: |
+          node scripts/browser_smoke.mjs
+          node scripts/browser_fast_import.mjs
+          node scripts/browser_order_details.mjs
+      - name: Publish browser screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: study-edition-mobile-screenshots
+          path: artifacts/ui/
+          if-no-files-found: ignore
+      - name: Export built static preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: study-edition-preview-dist
+          path: dist/
+          if-no-files-found: ignore

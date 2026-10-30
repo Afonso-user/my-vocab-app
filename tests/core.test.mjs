@@ -180,3 +180,51 @@ test("V4: sprint mistakes persist but preserve real FSRS due dates and counters"
   assert.equal(repeated.cramAgainCount, 1);
   assert.equal(repeated.cramLastGrade, "hard");
 });
+
+
+test("V5: import order and random order contain the same cards without duplicates", async () => {
+  const { orderQueue } = await import("../src/lib/order.ts");
+  const items = ["casa","olá","livro","amigo","comer","falar"].map((word,i) => ({
+    id:"w"+i,wordbookId:"v5",word,meaning:"释义 "+i,
+  }));
+  const queue = [items[4],items[1],items[5],items[0],items[3],items[2]]
+    .map(item=>({item,kind:"new"}));
+  const original = queue.map(q=>q.item.id);
+  const sequential = orderQueue(queue,"sequential",items);
+  assert.deepEqual(sequential.map(q=>q.item.id),items.map(x=>x.id));
+  const random = orderQueue(sequential,"random",items,()=>0);
+  assert.notDeepEqual(random.map(q=>q.item.id),sequential.map(q=>q.item.id));
+  assert.equal(new Set(random.map(q=>q.item.id)).size,items.length);
+  assert.deepEqual([...random.map(q=>q.item.id)].sort(),[...original].sort());
+  assert.deepEqual(queue.map(q=>q.item.id),original,"The source queue cannot be mutated");
+});
+
+test("V5: reorder remaining cards preserves completed cards, active word and duplicate replay", async () => {
+  const { reorderRemaining } = await import("../src/lib/order.ts");
+  const items = ["a","b","c","d"].map((id,i)=>({
+    id,wordbookId:"order",word:id,meaning:"value "+i,
+  }));
+  const queue = items.map(item=>({item,kind:"new"}));
+  const withReinforcement = [...queue,{item:items[1],kind:"reinforce"}];
+  const reordered = reorderRemaining(withReinforcement,1,"random",items,()=>0);
+  assert.equal(reordered[0],withReinforcement[0]);
+  assert.equal(reordered[1],withReinforcement[1]);
+  assert.deepEqual([...reordered.slice(2).map(x=>x.item.id)].sort(),["b","c","d"]);
+  const originalAgain = reorderRemaining(reordered,1,"sequential",items);
+  assert.deepEqual(originalAgain.map(x=>x.item.id),["a","b","c","d","b"]);
+  assert.equal(originalAgain.at(-1).kind,"reinforce");
+});
+
+test("V5: wordbook shuffle preference persists through JSON backup", async () => {
+  const { updateWordbook, getWordbook } = await import("../src/lib/store.ts");
+  localStorage.clear();
+  const {meta,item} = sample("order-meta");
+  saveWordbook(meta,[item]);
+  updateWordbook({...meta,studyOrder:"random"});
+  assert.equal(getWordbook(meta.id).studyOrder,"random");
+  const backup = exportBackup();
+  localStorage.clear();
+  assert.equal(restoreBackup(backup),1);
+  assert.equal(getWordbook(meta.id).studyOrder,"random");
+  assert.equal(getWordbookItems(meta.id)[0].word,item.word);
+});

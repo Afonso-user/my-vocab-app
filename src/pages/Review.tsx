@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Check, ChevronRight, RotateCcw, Settings2, Undo2, X } from "lucide-react";
-import type { Grade, StudyMode, StudyProgress, StudyQueueItem, VocabularyItem } from "../types";
+import { ArrowLeft, ArrowRight, Check, ListOrdered, RotateCcw, Settings2, Shuffle, Undo2, X } from "lucide-react";
+import type { Grade, StudyMode, StudyOrder, StudyProgress, StudyQueueItem, VocabularyItem } from "../types";
 import { getProgress, getWordbook, getWordbookItems, saveProgress, updateWordbook } from "../lib/store";
 import { isDue, schedule } from "../lib/fsrs";
 import { buildExamDrill } from "../lib/queue";
+import { orderQueue, reorderRemaining } from "../lib/order";
 import { finalReviewGrade, recordExamJudgment } from "../lib/review-flow";
 
 type UndoEntry = {
@@ -29,11 +30,10 @@ const MODES: { value: StudyMode; label: string }[] = [
 
 function createQueue(
   mode: StudyMode, items: VocabularyItem[], records: Record<string, StudyProgress>,
-  limit: number,
+  limit: number, order: StudyOrder,
 ): StudyQueueItem[] {
-  if (mode === "cram") return buildExamDrill(items, records, 120);
-  const fresh: VocabularyItem[] = [];
-  const due: VocabularyItem[] = [];
+  if (mode === "cram") return orderQueue(buildExamDrill(items, records, 120), order, items);
+  const fresh: VocabularyItem[] = [], due: VocabularyItem[] = [];
   const now = Date.now();
   for (const item of items) {
     const record = records[item.id];
@@ -43,18 +43,25 @@ function createQueue(
   due.sort((a, b) =>
     Date.parse(records[a.id].fsrs!.dueAt) - Date.parse(records[b.id].fsrs!.dueAt));
   const count = Math.max(1, Math.min(200, limit));
-  if (mode === "new") return fresh.slice(0, count).map(item => ({ item, kind: "new" }));
-  return [
-    ...due.slice(0, 60).map(item => ({ item, kind: "due" as const })),
-    ...fresh.slice(0, count).map(item => ({ item, kind: "new" as const })),
-  ];
+  const selected: StudyQueueItem[] = mode === "new"
+    ? fresh.slice(0, count).map(item => ({ item, kind: "new" as const }))
+    : [
+      ...due.slice(0, 60).map(item => ({ item, kind: "due" as const })),
+      ...fresh.slice(0, count).map(item => ({ item, kind: "new" as const })),
+    ];
+  return orderQueue(selected, order, items);
 }
+
 function display(value: string | string[] | undefined) {
   return Array.isArray(value) ? value.join(" · ") : value || "";
 }
 function extendedFields(item: VocabularyItem | undefined) {
   if (!item) return [];
   const entries: [string, string | string[] | undefined][] = [
+    ["音标", item.pronunciation],
+    ["词性", item.partOfSpeech],
+    ["阴阳性", item.gender === "masculine" ? "阳性" : item.gender === "feminine" ? "阴性" : item.gender === "common" ? "通性" : undefined],
+    ["等级", item.capleLevel], ["单元", item.unit],
     ["例句", item.example], ["例句翻译", item.exampleZh],
     ["固定搭配", item.collocations], ["近义词", item.synonyms],
     ["反义词", item.antonyms], ["词形", item.variants],
@@ -79,14 +86,14 @@ export default function Review() {
   const [limit, setLimit] = useState(book?.dailyNewLimit ?? 20);
   const [retention, setRetention] = useState(book?.targetRetention ?? 0.9);
   const [exam, setExam] = useState(book?.examDate ?? "");
+  const [studyOrder, setStudyOrder] = useState<StudyOrder>(book?.studyOrder === "random" ? "random" : "sequential");
   const [queue, setQueue] = useState<StudyQueueItem[]>(() =>
-    createQueue("today", items, getProgress(wordbookId), book?.dailyNewLimit ?? 20));
+    createQueue("today", items, getProgress(wordbookId), book?.dailyNewLimit ?? 20, book?.studyOrder === "random" ? "random" : "sequential"));
   const [index, setIndex] = useState(0);
   const [completed, setCompleted] = useState(0);
   const [selectedGrade, setSelectedGrade] = useState<Grade | null>(null);
   const [undo, setUndo] = useState<UndoEntry | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
   const [message, setMessage] = useState("");
   const lock = useRef(false);
 
@@ -105,27 +112,45 @@ export default function Review() {
 
   function switchMode(next: StudyMode) {
     setMode(next);
-    setQueue(createQueue(next, items, records, limit));
+    setQueue(createQueue(next, items, records, limit, studyOrder));
     setIndex(0);
     setCompleted(0);
     setSelectedGrade(null);
     setUndo(null);
     setShowSettings(false);
-    setShowDetails(false);
     setMessage("");
     lock.current = false;
   }
 
+  function changeStudyOrder(next: StudyOrder) {
+    if (next === studyOrder || !book) return;
+    try {
+      updateWordbook({ ...book, studyOrder: next });
+      setStudyOrder(next);
+      setQueue(previous => reorderRemaining(previous, index, next, items));
+      setUndo(previous => previous ? {
+        ...previous,
+        previousQueue: reorderRemaining(
+          previous.previousQueue, previous.previousIndex, next, items,
+        ),
+      } : null);
+      // No FSRS grading, active question change or progress reset on toggle.
+      setMessage("");
+    } catch (error) {
+      setMessage(persistError(error));
+    }
+  }
+
   /** Phase one: note confidence and reveal. No localStorage write yet. */
   function choose(grade: Grade) {
-    if (!word || lock.current || selectedGrade !== null || showSettings || showDetails) return;
+    if (!word || lock.current || selectedGrade !== null || showSettings) return;
     setSelectedGrade(grade);
     setMessage("");
   }
 
   /** Phase two: only the final verification writes a review event. */
   function confirm(mistake: boolean) {
-    if (!current || !word || selectedGrade === null || lock.current || showSettings || showDetails) return;
+    if (!current || !word || selectedGrade === null || lock.current || showSettings) return;
     lock.current = true;
     const grade = finalReviewGrade(selectedGrade, mistake);
     const previous = records[word.id];
@@ -149,8 +174,7 @@ export default function Review() {
       setIndex(value => value + 1);
       setCompleted(value => value + 1);
       setSelectedGrade(null);
-      setShowDetails(false);
-      setMessage("");
+        setMessage("");
     } catch (error) {
       lock.current = false;
       setMessage(persistError(error));
@@ -196,12 +220,10 @@ export default function Review() {
       const target = event.target as HTMLElement | null;
       if (event.ctrlKey || event.metaKey || event.altKey || event.repeat
         || target?.closest("input, textarea, select, [contenteditable=true]")) return;
-      if (event.key === "Escape") {
-        if (showDetails) { setShowDetails(false); event.preventDefault(); }
-        else if (showSettings) { setShowSettings(false); event.preventDefault(); }
-        return;
+      if (event.key === "Escape" && showSettings) {
+        setShowSettings(false); event.preventDefault(); return;
       }
-      if (showSettings || showDetails) return;
+      if (showSettings) return;
       if (target?.closest("button, a") && (event.key === " " || event.key === "Enter")) return;
       if (!showingAnswer && (event.key === "z" || event.key === "Z")) {
         event.preventDefault(); undoLast(); return;
@@ -246,7 +268,15 @@ export default function Review() {
         <span>{mode === "today" ? "今日学习" : mode === "new" ? "集中新词" : "考前突击"}
           <span className="rapid-phase-text"> / {showingAnswer ? "核对答案" : "先回忆"}</span>
         </span>
-        <span><strong>{Math.min(index + 1, queue.length)}</strong> / {queue.length}</span>
+        <div className="v5-order-toggle" role="group" aria-label="词书出题顺序">
+          <button type="button" className={studyOrder === "sequential" ? "active" : ""}
+            aria-label="顺序模式" aria-pressed={studyOrder === "sequential"}
+            onClick={() => changeStudyOrder("sequential")}><ListOrdered size={13}/>顺序</button>
+          <button type="button" className={studyOrder === "random" ? "active" : ""}
+            aria-label="随机模式" aria-pressed={studyOrder === "random"}
+            onClick={() => changeStudyOrder("random")}><Shuffle size={13}/>随机</button>
+        </div>
+        <span className="v5-queue-position"><strong>{Math.min(index + 1, queue.length)}</strong> / {queue.length}</span>
       </div>
       <div className="rapid-progress-track">
         <span style={{ width: (queue.length ? Math.min(100, index / queue.length * 100) : 100) + "%" }}/>
@@ -278,28 +308,33 @@ export default function Review() {
           <p>你能想起它的意思吗？</p>
         </div>
         <div className="v4-front-guide">先在心里回忆，再判断熟悉程度</div>
-      </div> : <div className="v4-back">
-        <div className="v4-back-word">
-          <span>PORTUGUÊS</span>
-          <h1 lang="pt">{word.word}</h1>
-          {word.partOfSpeech && <small>{word.partOfSpeech}</small>}
+      </div> : <div className={"v4-back v5-answer-back" + (details.length >= 8 ? " v5-dense" : "") + (details.length >= 14 ? " v5-packed" : "")}>
+        <div className="v5-answer-scroll" tabIndex={0} aria-label="全部完整词卡资料">
+          <div className="v5-answer-content">
+            <div className="v4-back-word">
+              <span>PORTUGUÊS</span>
+              <h1 lang="pt">{word.word}</h1>
+            </div>
+            <div className="v4-answer">
+              <span className="v4-eyebrow">中文释义 / ANSWER</span>
+              <h2 className={word.meaning.length > 95 ? "v4-longmeaning" : ""}>{word.meaning}</h2>
+              <div className="v4-selected"><Check size={13}/> 先前判断：{chosen?.label}</div>
+            </div>
+            {details.length > 0 ? <section className="v5-full-data" aria-label="完整补充资料">
+              <div className="v5-full-data-heading">
+                <span>完整资料</span><small>{details.length} 项 · 已全部展开</small>
+              </div>
+              <div className="v5-data-grid">
+                {details.map(entry => <div className={"v5-data-entry" + (entry.value.length > 32 || entry.value.includes("\n") ? " v5-long" : "")}
+                  key={entry.title}>
+                  <span>{entry.title}</span>
+                  <p>{entry.value}</p>
+                </div>)}
+              </div>
+            </section> : <div className="v5-no-more">这张词卡暂无补充资料</div>}
+          </div>
         </div>
-        <div className="v4-answer">
-          <span className="v4-eyebrow">中文释义 / ANSWER</span>
-          <h2 className={word.meaning.length > 95 ? "v4-longmeaning" : ""}>{word.meaning}</h2>
-          <div className="v4-selected"><Check size={13}/> 先前判断：{chosen?.label}</div>
-        </div>
-        {details.length ? <div className="v4-context">
-          {details.slice(0, 3).map(entry =>
-            <div className="v4-context-row" key={entry.title}>
-              <span>{entry.title}</span><p>{entry.value}</p>
-            </div>)}
-        </div> : <div className="v4-context-empty">这张词卡没有其他补充资料</div>}
-        {details.length > 0 && <button className="v4-all-details" type="button"
-          onClick={() => setShowDetails(true)}>
-          查看完整资料 <ChevronRight size={14}/> {details.length} 项
-        </button>}
-      </div>}
+      </div>
     </main>}
 
     <footer className="v4-actionbar">
@@ -333,24 +368,6 @@ export default function Review() {
       </>}
       {message && <p className="rapid-toast" role="status">{message}</p>}
     </footer>
-
-    {showDetails && <div className="v4-modal" role="presentation">
-      <button className="v4-modal-shade" onClick={() => setShowDetails(false)}
-        aria-label="关闭全部资料"/>
-      <section className="v4-modal-panel" role="dialog" aria-modal="true" aria-label="完整词卡资料">
-        <div className="v4-modal-heading">
-          <div><small>FULL NOTES</small><h2>{word?.word}</h2></div>
-          <button onClick={() => setShowDetails(false)} aria-label="关闭资料"><X size={18}/></button>
-        </div>
-        <div className="v4-modal-content">
-          <div className="v4-modal-meaning"><b>释义</b><p>{word?.meaning}</p></div>
-          {details.map(entry => <div className="v4-modal-row" key={entry.title}>
-            <b>{entry.title}</b><p>{entry.value}</p>
-          </div>)}
-        </div>
-        <button className="v4-modal-close" onClick={() => setShowDetails(false)}>返回核对答案</button>
-      </section>
-    </div>}
 
     {showSettings && <section className="rapid-settings" aria-label="学习设置">
       <div className="rapid-settings-heading"><b>学习设置</b>
